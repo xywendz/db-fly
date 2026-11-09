@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/dbclient/dbclient/internal/cli"
-	"github.com/dbclient/dbclient/internal/domain"
+	"github.com/db-fly/db-fly/internal/cli"
+	"github.com/db-fly/db-fly/internal/domain"
 )
 
 func main() {

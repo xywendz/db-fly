@@ -10,7 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dbclient/dbclient/internal/domain"
+	"github.com/db-fly/db-fly/internal/domain"
 )
 
 func (c *cli) connCmd() *cobra.Command {
@@ -50,9 +50,9 @@ func (c *cli) connListCmd() *cobra.Command {
 
 func (c *cli) connAddCmd() *cobra.Command {
 	var (
-		name, kind, host, user, database, tlsMode, password string
-		port, timeout                                       int
-		readOnly, passwordStdin                             bool
+		name, kind, host, user, database, tlsMode, password, paramsText string
+		port, timeout                                                   int
+		readOnly, passwordStdin                                         bool
 	)
 	cmd := &cobra.Command{
 		Use:   "add",
@@ -62,9 +62,17 @@ func (c *cli) connAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			selectedKind := normalizeKind(kind)
+			if !cmd.Flags().Changed("port") {
+				port = domain.DefaultPort(selectedKind)
+			}
+			params, err := parseParams(paramsText)
+			if err != nil {
+				return err
+			}
 			cfg := domain.ConnectionConfig{
-				Name: name, Kind: domain.Kind(kind), Host: host, Port: port,
-				User: user, Database: database, TLSMode: tlsMode,
+				Name: name, Kind: selectedKind, Host: host, Port: port,
+				User: user, Database: database, TLSMode: tlsMode, Params: params,
 				ReadOnly: readOnly, TimeoutSec: timeout,
 			}
 			if list, lerr := c.app.ListConnections(); lerr == nil {
@@ -86,13 +94,16 @@ func (c *cli) connAddCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "连接名称（必填）")
-	cmd.Flags().StringVar(&kind, "kind", string(domain.KindMySQL), "数据库类型: mysql/sqlserver/mongodb")
-	cmd.Flags().StringVar(&host, "host", "127.0.0.1", "主机")
-	cmd.Flags().IntVar(&port, "port", 3306, "端口")
+	cmd.Flags().StringVar(&kind, "kind", string(domain.KindMySQL),
+		"数据库类型: mysql/sqlserver/mongodb/postgresql/oracle/sqlite/redis")
+	cmd.Flags().StringVar(&host, "host", "127.0.0.1", "主机（SQLite 为数据库文件路径）")
+	cmd.Flags().IntVar(&port, "port", 3306, "端口（默认按 --kind 自动选择；SQLite 可为 0）")
 	cmd.Flags().StringVar(&user, "user", "root", "用户名")
 	cmd.Flags().StringVar(&database, "database", "", "默认数据库")
 	cmd.Flags().StringVar(&tlsMode, "tls", "false", "TLS 模式: false/true/skip-verify/preferred")
 	cmd.Flags().IntVar(&timeout, "timeout", 15, "连接超时（秒）")
+	cmd.Flags().StringVar(&paramsText, "params", "",
+		"附加参数 key=value，逗号分隔（如 oracle: service=XEPDB1；redis: username=acl；sqlite: file=./a.db）")
 	cmd.Flags().BoolVar(&readOnly, "read-only", false, "只读模式")
 	cmd.Flags().StringVar(&password, "password", "", "密码（明文传参，仅建议测试环境）")
 	cmd.Flags().BoolVar(&passwordStdin, "password-stdin", false, "从标准输入第一行读取密码")
@@ -129,6 +140,37 @@ func (c *cli) connRemoveCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// normalizeKind 兼容常见的数据库类型别名。
+func normalizeKind(s string) domain.Kind {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "postgres", "pg", "pgsql":
+		return domain.KindPostgreSQL
+	case "sqlite3", "sqlite":
+		return domain.KindSQLite
+	case "mssql", "sqlserver":
+		return domain.KindSQLServer
+	case "mongo":
+		return domain.KindMongoDB
+	default:
+		return domain.Kind(strings.ToLower(strings.TrimSpace(s)))
+	}
+}
+
+func parseParams(text string) (map[string]string, error) {
+	if strings.TrimSpace(text) == "" {
+		return nil, nil
+	}
+	out := make(map[string]string)
+	for _, item := range strings.Split(text, ",") {
+		pair := strings.SplitN(strings.TrimSpace(item), "=", 2)
+		if len(pair) != 2 || strings.TrimSpace(pair[0]) == "" {
+			return nil, fmt.Errorf("附加参数 %q 不是 key=value 形式", item)
+		}
+		out[strings.TrimSpace(pair[0])] = strings.TrimSpace(pair[1])
+	}
+	return out, nil
 }
 
 func readPassword(plain string, fromStdin bool) (string, error) {

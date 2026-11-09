@@ -14,8 +14,8 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 
-	"github.com/dbclient/dbclient/internal/domain"
-	"github.com/dbclient/dbclient/internal/provider"
+	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/db-fly/db-fly/internal/provider"
 )
 
 type providerImpl struct{}
@@ -53,7 +53,7 @@ func buildURI(cfg domain.ConnectionConfig) (string, error) {
 		u.User = url.UserPassword(cfg.User, cfg.Password)
 	}
 	q := url.Values{}
-	q.Set("appName", "dbclient")
+	q.Set("appName", "db-fly")
 	q.Set("connectTimeoutMS", strconv.FormatInt(cfg.EffectiveTimeout().Milliseconds(), 10))
 	q.Set("serverSelectionTimeoutMS", strconv.FormatInt(cfg.EffectiveTimeout().Milliseconds(), 10))
 	if cfg.User != "" {
@@ -87,12 +87,13 @@ type session struct {
 	caps   domain.CapabilitySet
 }
 
-func (s *session) Kind() domain.Kind                  { return domain.KindMongoDB }
-func (s *session) Capabilities() domain.CapabilitySet { return s.caps.Clone() }
-func (s *session) Metadata() domain.MetadataBrowser   { return &metadataBrowser{client: s.client} }
-func (s *session) Schema() domain.SchemaEditor        { return &schemaEditor{client: s.client} }
-func (s *session) Query() domain.QueryExecutor        { return &queryExecutor{client: s.client} }
-func (s *session) Data() domain.DataEditor            { return &dataEditor{client: s.client} }
+func (s *session) Kind() domain.Kind                    { return domain.KindMongoDB }
+func (s *session) Capabilities() domain.CapabilitySet   { return s.caps.Clone() }
+func (s *session) Metadata() domain.MetadataBrowser     { return &metadataBrowser{client: s.client} }
+func (s *session) Schema() domain.SchemaEditor          { return &schemaEditor{client: s.client} }
+func (s *session) Query() domain.QueryExecutor          { return &queryExecutor{client: s.client} }
+func (s *session) Data() domain.DataEditor              { return &dataEditor{client: s.client} }
+func (s *session) Maintenance() domain.TableMaintenance { return nil }
 
 func (s *session) Close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -132,6 +133,8 @@ func capabilitySet() domain.CapabilitySet {
 		domain.CapMultiResult:    false,
 		domain.CapTransactions:   false, // 多文档事务需 session，一期不提供
 		domain.CapDataEdit:       true,
+		domain.CapTableFilter:    true, // 集合数据浏览支持 filter / sort Extended JSON
+		domain.CapShowCreate:     true, // 可查看 createCollection 等价命令
 	}
 }
 

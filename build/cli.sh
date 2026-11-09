@@ -11,7 +11,7 @@ OUTPUT="${OUTPUT:-dist/dbctl}"
 mkdir -p "$(dirname "$OUTPUT")"
 CGO_ENABLED=0 GOOS="$GOOS_TARGET" GOARCH="$GOARCH_TARGET" \
   go build -trimpath \
-  -ldflags "-s -w -X github.com/dbclient/dbclient/internal/cli.Version=${VERSION}" \
+  -ldflags "-s -w -X github.com/db-fly/db-fly/internal/cli.Version=${VERSION}" \
   -o "$OUTPUT" ./cmd/dbctl
 
 echo "已生成 $OUTPUT (${GOOS_TARGET}/${GOARCH_TARGET}, ${VERSION})"

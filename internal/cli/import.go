@@ -5,8 +5,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dbclient/dbclient/internal/app"
-	"github.com/dbclient/dbclient/internal/domain"
+	"github.com/db-fly/db-fly/internal/app"
+	"github.com/db-fly/db-fly/internal/domain"
 )
 
 func (c *cli) importCmd() *cobra.Command {

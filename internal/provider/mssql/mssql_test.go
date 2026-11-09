@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dbclient/dbclient/internal/domain"
+	"github.com/db-fly/db-fly/internal/domain"
 )
 
 func strPtr(s string) *string { return &s }

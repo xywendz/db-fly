@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dbclient/dbclient/internal/domain"
-	"github.com/dbclient/dbclient/internal/platform/config"
+	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/db-fly/db-fly/internal/platform/config"
 )
 
 // 通过嵌入 domain 接口，只实现被测用例真正调用的方法。

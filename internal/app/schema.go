@@ -3,8 +3,8 @@ package app
 import (
 	"context"
 
-	"github.com/dbclient/dbclient/internal/domain"
-	"github.com/dbclient/dbclient/internal/platform/audit"
+	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/db-fly/db-fly/internal/platform/audit"
 )
 
 // 结构变更一律走「生成脚本 → 预览确认 → ApplyScript 执行」，不做静默 DDL。
@@ -58,6 +58,33 @@ func (a *App) ShowCreate(ctx context.Context, conn string, ref domain.ObjectRef)
 		return "", err
 	}
 	return s.Schema().ShowCreate(ctx, ref)
+}
+
+// PreviewTableAction 生成 TRUNCATE / DELETE FROM 的可预览脚本。
+// 清空数据属于危险操作，必须走「脚本预览 → 用户确认 → ApplyScript」流程。
+func (a *App) PreviewTableAction(ctx context.Context, conn string, ref domain.ObjectRef, action domain.TableAction) (domain.Script, error) {
+	if !action.Valid() {
+		return domain.Script{}, domain.NewError(domain.CodeValidation, "table_action",
+			"不支持的清空动作 %q（可用 truncate/empty）", action)
+	}
+	c, err := a.cfgOf(conn)
+	if err != nil {
+		return domain.Script{}, err
+	}
+	if c.ReadOnly {
+		return domain.Script{}, domain.NewError(domain.CodeReadOnly, "table_action",
+			"只读连接禁止清空表数据")
+	}
+	s, err := a.Session(ctx, conn)
+	if err != nil {
+		return domain.Script{}, err
+	}
+	maintenance := s.Maintenance()
+	if maintenance == nil {
+		return domain.Script{}, domain.NewError(domain.CodeUnsupported, "table_action",
+			"当前数据库模块不支持 TRUNCATE / 清空数据操作")
+	}
+	return maintenance.TableActionScript(ctx, ref, action)
 }
 
 // ApplyScript 执行已经过用户确认的脚本。只读连接一律拒绝 DDL/DML 脚本。

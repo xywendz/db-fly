@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dbclient/dbclient/internal/domain"
+	"github.com/db-fly/db-fly/internal/domain"
 )
 
 // Preferences 是跨 GUI / CLI 共享的用户偏好。
@@ -85,13 +85,25 @@ type FileStore struct {
 	mu   sync.Mutex
 }
 
-// DefaultDir 返回默认数据目录 ~/.dbclient。
+// DefaultDir 返回默认数据目录 ~/.db-fly。
+// 兼容升级：若新目录尚不存在但旧版 ~/.dbclient 存在，则继续使用旧目录，
+// 避免已有连接配置与凭证库在改名后失效。
 func DefaultDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("无法获取用户目录: %w", err)
 	}
-	return filepath.Join(home, ".dbclient"), nil
+	dir := filepath.Join(home, ".db-fly")
+	if _, err := os.Stat(dir); err == nil {
+		return dir, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("检查数据目录失败: %w", err)
+	}
+	legacy := filepath.Join(home, ".dbclient")
+	if info, err := os.Stat(legacy); err == nil && info.IsDir() {
+		return legacy, nil
+	}
+	return dir, nil
 }
 
 // New 创建配置存储；dir 为空时使用默认目录。

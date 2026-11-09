@@ -19,7 +19,15 @@ type Session interface {
 	Schema() SchemaEditor
 	Query() QueryExecutor
 	Data() DataEditor
+	// Maintenance 返回表数据清空操作脚本生成器；不支持的模块返回 nil。
+	Maintenance() TableMaintenance
 	Close() error
+}
+
+// TableMaintenance 为 TRUNCATE / DELETE FROM 等危险操作生成「可预览 → 显式确认 → 执行」的脚本。
+// 它是可选端口：只有声明 CapTruncateTable / CapEmptyTable 的关系型模块需要实现。
+type TableMaintenance interface {
+	TableActionScript(ctx context.Context, ref ObjectRef, action TableAction) (Script, error)
 }
 
 // MetadataBrowser 提供元数据树所需的只读查询能力。

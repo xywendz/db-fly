@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"strings"
 
-	"github.com/dbclient/dbclient/internal/domain"
+	"github.com/db-fly/db-fly/internal/domain"
 )
 
 // resultSet 是流式结果集，每次 Next 都分配新的 Row，避免表现层持有失效缓冲区。

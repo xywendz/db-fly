@@ -3,7 +3,11 @@
 package all
 
 import (
-	_ "github.com/dbclient/dbclient/internal/provider/mongo"
-	_ "github.com/dbclient/dbclient/internal/provider/mssql"
-	_ "github.com/dbclient/dbclient/internal/provider/mysql"
+	_ "github.com/db-fly/db-fly/internal/provider/mongo"
+	_ "github.com/db-fly/db-fly/internal/provider/mssql"
+	_ "github.com/db-fly/db-fly/internal/provider/mysql"
+	_ "github.com/db-fly/db-fly/internal/provider/oracle"
+	_ "github.com/db-fly/db-fly/internal/provider/postgres"
+	_ "github.com/db-fly/db-fly/internal/provider/redis"
+	_ "github.com/db-fly/db-fly/internal/provider/sqlite"
 )

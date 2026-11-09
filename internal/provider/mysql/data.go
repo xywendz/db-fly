@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/dbclient/dbclient/internal/domain"
+	"github.com/db-fly/db-fly/internal/domain"
 )
 
 // dataEditor 把结构化编辑请求翻译成参数化 SQL，绝不拼接用户值。

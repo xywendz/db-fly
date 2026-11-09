@@ -15,7 +15,12 @@ import (
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
 
-	"github.com/dbclient/dbclient/internal/domain"
+	"github.com/db-fly/db-fly/internal/domain"
+)
+
+var (
+	schemaColumnHeaders = []string{"字段", "类型", "可空", "默认值", "主键", "自增", "注释"}
+	schemaIndexHeaders  = []string{"索引名", "列", "唯一", "类型"}
 )
 
 type schemaView struct {
@@ -41,21 +46,29 @@ func newSchemaView(u *ui) *schemaView { return &schemaView{u: u} }
 func (v *schemaView) build() fyne.CanvasObject {
 	v.info = widget.NewLabel("请在左侧选择一张表")
 	v.colTable = widget.NewTable(
-		func() (int, int) { v.mu.RLock(); defer v.mu.RUnlock(); return len(v.columns) + 1, 7 },
-		func() fyne.CanvasObject { return widget.NewLabel("") },
+		func() (int, int) {
+			v.mu.RLock()
+			defer v.mu.RUnlock()
+			return len(v.columns) + 1, len(schemaColumnHeaders)
+		},
+		func() fyne.CanvasObject { return newCellLabel() },
 		func(id widget.TableCellID, o fyne.CanvasObject) {
-			o.(*widget.Label).SetText(v.columnCell(id))
+			o.(*widget.Label).SetText(cellText(v.columnCell(id)))
 		},
 	)
 	v.idxTable = widget.NewTable(
-		func() (int, int) { v.mu.RLock(); defer v.mu.RUnlock(); return len(v.indexes) + 1, 4 },
-		func() fyne.CanvasObject { return widget.NewLabel("") },
+		func() (int, int) {
+			v.mu.RLock()
+			defer v.mu.RUnlock()
+			return len(v.indexes) + 1, len(schemaIndexHeaders)
+		},
+		func() fyne.CanvasObject { return newCellLabel() },
 		func(id widget.TableCellID, o fyne.CanvasObject) {
-			o.(*widget.Label).SetText(v.indexCell(id))
+			o.(*widget.Label).SetText(cellText(v.indexCell(id)))
 		},
 	)
-	v.colTable.SetColumnWidth(0, 150)
-	v.colTable.SetColumnWidth(1, 160)
+	sizeTableColumns(v.colTable, schemaColumnHeaders, nil)
+	sizeTableColumns(v.idxTable, schemaIndexHeaders, nil)
 
 	v.ddl = widget.NewMultiLineEntry()
 	v.ddl.Wrapping = fyne.TextWrapOff
@@ -68,9 +81,10 @@ func (v *schemaView) build() fyne.CanvasObject {
 	)
 	toolbar := container.NewHBox(
 		widget.NewButton("刷新", v.reload),
-		widget.NewButton("修改结构", v.showAlterForm),
-		widget.NewButton("新建表", v.showCreateTable),
-		widget.NewButton("删除表", v.showDropTable),
+		widget.NewButton("查看建表 SQL", v.showDDL),
+		widget.NewButton("修改结构（预览 SQL）", v.showAlterForm),
+		widget.NewButton("新建表（预览 SQL）", v.showCreateTable),
+		widget.NewButton("删除表（预览 SQL）", v.showDropTable),
 	)
 	return container.NewBorder(toolbar, v.info, nil, nil, tabs)
 }
@@ -78,7 +92,7 @@ func (v *schemaView) build() fyne.CanvasObject {
 func (v *schemaView) columnCell(id widget.TableCellID) string {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
-	headers := []string{"字段", "类型", "可空", "默认值", "主键", "自增", "注释"}
+	headers := schemaColumnHeaders
 	if id.Row == 0 {
 		if id.Col < len(headers) {
 			return headers[id.Col]
@@ -114,7 +128,7 @@ func (v *schemaView) columnCell(id widget.TableCellID) string {
 func (v *schemaView) indexCell(id widget.TableCellID) string {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
-	headers := []string{"索引名", "列", "唯一", "类型"}
+	headers := schemaIndexHeaders
 	if id.Row == 0 {
 		if id.Col < len(headers) {
 			return headers[id.Col]
@@ -182,10 +196,62 @@ func (v *schemaView) render(seq int, schema domain.TableSchema) {
 
 	v.info.SetText(fmt.Sprintf("%s · 引擎 %s · 字符集 %s · %d 字段 / %d 索引",
 		schema.Ref.String(), schema.Engine, schema.Charset, len(schema.Columns), len(schema.Indexes)))
-	v.ddl.SetText(schema.DDL + ";")
+	ddl := strings.TrimSpace(schema.DDL)
+	switch {
+	case ddl == "":
+		ddl = "-- 该对象没有可展示的建表语句"
+	case strings.HasSuffix(ddl, ";") || strings.HasPrefix(ddl, "#"):
+		// 已包含语句结束符，或是命令式脚本，保持原文
+	default:
+		ddl += ";"
+	}
+	v.ddl.SetText(ddl)
+	v.sizeColumnsToData()
 	v.colTable.Refresh()
 	v.idxTable.Refresh()
 	v.u.setStatus("结构加载完成：%s", schema.Ref.String())
+}
+
+// sizeColumnsToData 按最新的字段/索引内容重新计算列宽，避免长文本互相覆盖。
+func (v *schemaView) sizeColumnsToData() {
+	v.mu.RLock()
+	colSample := make([][]string, 0, len(v.columns))
+	for _, c := range v.columns {
+		colSample = append(colSample, []string{c.Name, c.RawType, "", c.Default, "", "", c.Comment})
+	}
+	idxSample := make([][]string, 0, len(v.indexes))
+	for _, idx := range v.indexes {
+		idxSample = append(idxSample, []string{idx.Name, strings.Join(idx.Columns, ", "), "", idx.IndexType})
+	}
+	v.mu.RUnlock()
+
+	sizeTableColumns(v.colTable, schemaColumnHeaders, colSample)
+	sizeTableColumns(v.idxTable, schemaIndexHeaders, idxSample)
+}
+
+// showDDL 展示服务端建表语句（或由元数据反向渲染 / 等价创建命令）。
+func (v *schemaView) showDDL() {
+	if v.conn == "" || v.table == "" {
+		v.u.showInfo("提示", "请先在左侧选择一张表")
+		return
+	}
+	conn := v.conn
+	ref := domain.ObjectRef{Database: v.database, Name: v.table}
+	v.u.async(func() {
+		ddl, err := v.u.core.ShowCreate(context.Background(), conn, ref)
+		if err != nil {
+			v.u.showError(err)
+			return
+		}
+		fyne.Do(func() {
+			content := widget.NewMultiLineEntry()
+			content.Wrapping = fyne.TextWrapOff
+			content.SetText(ddl)
+			scroll := container.NewScroll(content)
+			scroll.SetMinSize(fyne.NewSize(760, 460))
+			dialog.ShowCustom("建表语句 · "+ref.String(), "关闭", scroll, v.u.win)
+		})
+	})
 }
 
 func (v *schemaView) showAlterForm() {
@@ -316,7 +382,7 @@ func (v *schemaView) showCreateTable() {
   ],
   "engine": "InnoDB",
   "charset": "utf8mb4",
-  "comment": "由 DBClient 创建",
+  "comment": "由 db-fly 创建",
   "if_not_exists": true
 }`)
 

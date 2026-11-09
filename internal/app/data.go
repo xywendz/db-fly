@@ -4,8 +4,8 @@ import (
 	"context"
 	"strings"
 
-	"github.com/dbclient/dbclient/internal/domain"
-	"github.com/dbclient/dbclient/internal/platform/audit"
+	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/db-fly/db-fly/internal/platform/audit"
 )
 
 // 结果集编辑统一走「结构化变更 → 模块生成参数化脚本 → 预览确认 → 回写」。

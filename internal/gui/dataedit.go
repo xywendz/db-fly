@@ -12,8 +12,8 @@ import (
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
 
-	core "github.com/dbclient/dbclient/internal/app"
-	"github.com/dbclient/dbclient/internal/domain"
+	core "github.com/db-fly/db-fly/internal/app"
+	"github.com/db-fly/db-fly/internal/domain"
 )
 
 const (

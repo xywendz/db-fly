@@ -10,11 +10,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dbclient/dbclient/internal/domain"
-	"github.com/dbclient/dbclient/internal/platform/audit"
-	"github.com/dbclient/dbclient/internal/platform/config"
-	"github.com/dbclient/dbclient/internal/platform/credential"
-	"github.com/dbclient/dbclient/internal/provider"
+	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/db-fly/db-fly/internal/platform/audit"
+	"github.com/db-fly/db-fly/internal/platform/config"
+	"github.com/db-fly/db-fly/internal/platform/credential"
+	"github.com/db-fly/db-fly/internal/provider"
 )
 
 // App 聚合配置、凭证、审计与会话缓存，是所有用例的入口。
@@ -180,7 +180,8 @@ func ValidateConnection(c domain.ConnectionConfig) error {
 	if c.Host == "" {
 		return domain.NewError(domain.CodeValidation, "connection", "主机地址不能为空")
 	}
-	if c.Port < 1 || c.Port > 65535 {
+	// 文件型数据库（SQLite）用 Host 保存文件路径，不需要端口。
+	if !c.Kind.IsFileBased() && (c.Port < 1 || c.Port > 65535) {
 		return domain.NewError(domain.CodeValidation, "connection", "端口必须在 1~65535 之间")
 	}
 	return nil

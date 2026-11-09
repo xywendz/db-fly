@@ -11,7 +11,7 @@ import (
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
 
-	"github.com/dbclient/dbclient/internal/platform/config"
+	"github.com/db-fly/db-fly/internal/platform/config"
 )
 
 type queryPick struct {

@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 
-	"github.com/dbclient/dbclient/internal/domain"
-	"github.com/dbclient/dbclient/internal/platform/audit"
-	"github.com/dbclient/dbclient/internal/platform/config"
-	"github.com/dbclient/dbclient/internal/platform/credential"
-	"github.com/dbclient/dbclient/internal/provider"
+	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/db-fly/db-fly/internal/platform/audit"
+	"github.com/db-fly/db-fly/internal/platform/config"
+	"github.com/db-fly/db-fly/internal/platform/credential"
+	"github.com/db-fly/db-fly/internal/provider"
 )
 
 // ListConnections 返回全部连接定义（不含密码）。

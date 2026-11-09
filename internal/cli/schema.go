@@ -10,8 +10,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dbclient/dbclient/internal/app"
-	"github.com/dbclient/dbclient/internal/domain"
+	"github.com/db-fly/db-fly/internal/app"
+	"github.com/db-fly/db-fly/internal/domain"
 )
 
 func (c *cli) schemaCmd() *cobra.Command {
@@ -255,15 +255,24 @@ func (c *cli) schemaApplyCmd() *cobra.Command {
 					"自定义脚本请使用全限定表名，或在连接配置中设置默认数据库。",
 					"脚本逐条执行，MySQL DDL 隐式提交，中途失败不会自动回滚已执行语句。",
 				}
+			case "redis_command":
+				for _, line := range strings.Split(text, "\n") {
+					command := strings.TrimSpace(line)
+					if command == "" || strings.HasPrefix(command, "#") {
+						continue
+					}
+					script.Statements = append(script.Statements, command)
+				}
+				script.Warnings = []string{"Redis 命令按行顺序执行，失败即停止；删除类操作不可恢复。"}
 			default:
-				return fmt.Errorf("不支持的脚本格式 %q（可用 auto/sql/mongo_command）", format)
+				return fmt.Errorf("不支持的脚本格式 %q（可用 auto/sql/mongo_command/redis_command）", format)
 			}
 			return c.previewAndApply(cmd, conn, script, apply, yes)
 		},
 	}
 	cmd.Flags().StringVar(&conn, "conn", "", "连接名称（必填）")
 	cmd.Flags().StringVar(&file, "file", "", "SQL 或 MongoDB 命令脚本文件（必填）")
-	cmd.Flags().StringVar(&format, "format", "auto", "脚本格式: auto/sql/mongo_command")
+	cmd.Flags().StringVar(&format, "format", "auto", "脚本格式: auto/sql/mongo_command/redis_command")
 	cmd.Flags().BoolVar(&apply, "apply", false, "执行脚本（默认仅预览）")
 	cmd.Flags().BoolVar(&yes, "yes", false, "非交互确认")
 	_ = cmd.MarkFlagRequired("conn")

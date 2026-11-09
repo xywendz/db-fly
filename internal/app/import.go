@@ -15,9 +15,9 @@ import (
 
 	"github.com/xuri/excelize/v2"
 
-	"github.com/dbclient/dbclient/internal/domain"
-	"github.com/dbclient/dbclient/internal/platform/audit"
-	"github.com/dbclient/dbclient/internal/platform/config"
+	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/db-fly/db-fly/internal/platform/audit"
+	"github.com/db-fly/db-fly/internal/platform/config"
 )
 
 const defaultImportBatchSize = 200

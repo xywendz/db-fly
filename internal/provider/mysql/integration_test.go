@@ -13,7 +13,7 @@ import (
 
 	gmysql "github.com/go-sql-driver/mysql"
 
-	"github.com/dbclient/dbclient/internal/domain"
+	"github.com/db-fly/db-fly/internal/domain"
 )
 
 // 集成测试需要真实 MySQL。示例：
@@ -59,7 +59,7 @@ func TestIntegrationFullChain(t *testing.T) {
 		t.Fatalf("版本探测失败: %+v, %v", info, err)
 	}
 
-	dbName := fmt.Sprintf("dbclient_it_%d", time.Now().UnixNano()%1e9)
+	dbName := fmt.Sprintf("db_fly_it_%d", time.Now().UnixNano()%1e9)
 	createDB, err := session.Schema().CreateDatabaseScript(ctx, domain.DatabaseSpec{
 		Name: dbName, Charset: "utf8mb4",
 	})

@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dbclient/dbclient/internal/domain"
+	"github.com/db-fly/db-fly/internal/domain"
 )
 
 func TestSplitStatements(t *testing.T) {

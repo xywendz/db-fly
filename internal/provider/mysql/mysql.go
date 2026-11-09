@@ -12,8 +12,9 @@ import (
 
 	gmysql "github.com/go-sql-driver/mysql"
 
-	"github.com/dbclient/dbclient/internal/domain"
-	"github.com/dbclient/dbclient/internal/provider"
+	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/db-fly/db-fly/internal/provider"
+	"github.com/db-fly/db-fly/internal/provider/sqlkit"
 )
 
 type providerImpl struct{}
@@ -88,6 +89,24 @@ func (s *session) Query() domain.QueryExecutor        { return &queryExecutor{db
 func (s *session) Data() domain.DataEditor            { return &dataEditor{db: s.db} }
 func (s *session) Close() error                       { return s.db.Close() }
 
+// Maintenance 生成 TRUNCATE / DELETE FROM 的可预览脚本。
+func (s *session) Maintenance() domain.TableMaintenance {
+	return sqlkit.TableOps{
+		Name: "mysql",
+		Qualified: func(ref domain.ObjectRef) (string, error) {
+			return quoteQualified(ref.Database, ref.Name)
+		},
+		Statements: func(action domain.TableAction, _ domain.ObjectRef, qualified string) ([]string, error) {
+			switch action {
+			case domain.TableActionTruncate:
+				return []string{"TRUNCATE TABLE " + qualified}, nil
+			default:
+				return []string{"DELETE FROM " + qualified}, nil
+			}
+		},
+	}
+}
+
 func (s *session) ServerInfo(ctx context.Context) (domain.ServerInfo, error) {
 	var version string
 	if err := s.db.QueryRowContext(ctx, "SELECT VERSION()").Scan(&version); err != nil {
@@ -115,6 +134,10 @@ func capabilitySet() domain.CapabilitySet {
 		domain.CapMultiResult:    true,
 		domain.CapTransactions:   true,
 		domain.CapDataEdit:       true,
+		domain.CapTableFilter:    true,
+		domain.CapShowCreate:     true,
+		domain.CapTruncateTable:  true,
+		domain.CapEmptyTable:     true,
 	}
 }
 

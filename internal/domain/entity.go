@@ -12,19 +12,27 @@ import (
 type Kind string
 
 const (
-	KindMySQL     Kind = "mysql"
-	KindSQLServer Kind = "sqlserver"
-	KindMongoDB   Kind = "mongodb"
+	KindMySQL      Kind = "mysql"
+	KindSQLServer  Kind = "sqlserver"
+	KindMongoDB    Kind = "mongodb"
+	KindPostgreSQL Kind = "postgresql"
+	KindOracle     Kind = "oracle"
+	KindSQLite     Kind = "sqlite"
+	KindRedis      Kind = "redis"
 )
 
 // AllKinds 返回产品计划支持的全部数据库类型。
 func AllKinds() []Kind {
-	return []Kind{KindMySQL, KindSQLServer, KindMongoDB}
+	return []Kind{
+		KindMySQL, KindSQLServer, KindMongoDB,
+		KindPostgreSQL, KindOracle, KindSQLite, KindRedis,
+	}
 }
 
 func (k Kind) Valid() bool {
 	switch k {
-	case KindMySQL, KindSQLServer, KindMongoDB:
+	case KindMySQL, KindSQLServer, KindMongoDB,
+		KindPostgreSQL, KindOracle, KindSQLite, KindRedis:
 		return true
 	default:
 		return false
@@ -33,7 +41,20 @@ func (k Kind) Valid() bool {
 
 func (k Kind) String() string { return string(k) }
 
-// DefaultPort 返回各数据库的默认端口。
+// IsFileBased 表示连接目标是本地文件，无需主机与端口（如 SQLite）。
+func (k Kind) IsFileBased() bool { return k == KindSQLite }
+
+// IsRelational 表示该模块使用 SQL 方言与关系型元数据端口。
+func (k Kind) IsRelational() bool {
+	switch k {
+	case KindMySQL, KindSQLServer, KindPostgreSQL, KindOracle, KindSQLite:
+		return true
+	default:
+		return false
+	}
+}
+
+// DefaultPort 返回各数据库的默认端口；文件型数据库返回 0。
 func DefaultPort(k Kind) int {
 	switch k {
 	case KindMySQL:
@@ -42,6 +63,14 @@ func DefaultPort(k Kind) int {
 		return 1433
 	case KindMongoDB:
 		return 27017
+	case KindPostgreSQL:
+		return 5432
+	case KindOracle:
+		return 1521
+	case KindRedis:
+		return 6379
+	case KindSQLite:
+		return 0
 	default:
 		return 0
 	}
@@ -67,6 +96,15 @@ const (
 	CapMultiResult    Capability = "multi_result"
 	CapTransactions   Capability = "transactions"
 	CapDataEdit       Capability = "data_edit"
+	// CapTableFilter 表示表数据浏览支持 filter / sort 条件。
+	CapTableFilter Capability = "table_filter"
+	// CapShowCreate 表示可展示对象的建表 SQL（或等价创建脚本）。
+	CapShowCreate Capability = "show_create"
+	// CapTruncateTable / CapEmptyTable 表示支持 TRUNCATE 与 DELETE FROM 清空数据。
+	CapTruncateTable Capability = "truncate_table"
+	CapEmptyTable    Capability = "empty_table"
+	// CapKeyValues 表示键值型模块（Redis）以 key 为浏览对象。
+	CapKeyValues Capability = "key_values"
 )
 
 // CapabilitySet 是能力集合。
@@ -136,6 +174,7 @@ const (
 	ObjectTable      ObjectType = "table"
 	ObjectView       ObjectType = "view"
 	ObjectCollection ObjectType = "collection"
+	ObjectKey        ObjectType = "key"
 )
 
 // ObjectInfo 描述树形浏览器中的一个节点。
@@ -290,6 +329,8 @@ type Script struct {
 	Statements []string `json:"statements"`
 	Rollback   []string `json:"rollback,omitempty"`
 	Warnings   []string `json:"warnings,omitempty"`
+	// Database 指定脚本应绑定到的库；PostgreSQL 等按库建立独立连接池的模块据此选池。
+	Database string `json:"database,omitempty"`
 }
 
 // ExecOutcome 是单条语句的执行结果。
@@ -311,7 +352,22 @@ const (
 	LangSQL           QueryLanguage = "sql"
 	LangMongoFilter   QueryLanguage = "mongo_filter"
 	LangMongoPipeline QueryLanguage = "mongo_pipeline"
+	LangRedis         QueryLanguage = "redis"
 )
+
+// TableAction 枚举「清空表数据」的两种动作。
+type TableAction string
+
+const (
+	// TableActionTruncate 使用 DDL 截断表（不可回滚、通常重置自增序列）。
+	TableActionTruncate TableAction = "truncate"
+	// TableActionEmpty 使用 DELETE FROM 逐行删除（可进事务、不重置自增序列）。
+	TableActionEmpty TableAction = "empty"
+)
+
+func (a TableAction) Valid() bool {
+	return a == TableActionTruncate || a == TableActionEmpty
+}
 
 // Query 是一次查询请求。Collection 仅对 MongoDB 有意义。
 type Query struct {
@@ -321,9 +377,14 @@ type Query struct {
 	Ref        ObjectRef `json:"ref,omitempty"`
 	Database   string    `json:"database,omitempty"`
 	Collection string    `json:"collection,omitempty"`
-	MaxRows    int       `json:"max_rows,omitempty"`
-	TimeoutSec int       `json:"timeout_sec,omitempty"`
-	ReadOnly   bool      `json:"read_only,omitempty"`
+	// Filter / Sort 仅用于表数据浏览（Text 为空）时的条件附加：
+	// 关系型分别为 WHERE 与 ORDER BY 片段；MongoDB 为 filter 与 sort 的 Extended JSON；
+	// Redis 的 Filter 为 SCAN 的键匹配模式。各模块自行解释，不含方言的通用层只做透传。
+	Filter     string `json:"filter,omitempty"`
+	Sort       string `json:"sort,omitempty"`
+	MaxRows    int    `json:"max_rows,omitempty"`
+	TimeoutSec int    `json:"timeout_sec,omitempty"`
+	ReadOnly   bool   `json:"read_only,omitempty"`
 }
 
 // ValueKind 描述结果单元格的展示类型。

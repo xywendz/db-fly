@@ -4,8 +4,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dbclient/dbclient/internal/domain"
-	"github.com/dbclient/dbclient/internal/platform/config"
+	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/db-fly/db-fly/internal/platform/config"
 )
 
 const (

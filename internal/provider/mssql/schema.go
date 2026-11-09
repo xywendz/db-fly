@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/dbclient/dbclient/internal/domain"
+	"github.com/db-fly/db-fly/internal/domain"
 )
 
 // schemaEditor 把结构化编辑翻译成 T-SQL 脚本。

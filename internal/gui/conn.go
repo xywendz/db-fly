@@ -5,7 +5,9 @@ package gui
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -13,7 +15,8 @@ import (
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
 
-	"github.com/dbclient/dbclient/internal/domain"
+	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/db-fly/db-fly/internal/provider"
 )
 
 // refreshConnections 重新加载连接列表并刷新左侧树与查询页连接下拉框。
@@ -120,6 +123,34 @@ func (u *ui) showConnections() {
 	d.Show()
 }
 
+func parseConnParams(text string) (map[string]string, error) {
+	if strings.TrimSpace(text) == "" {
+		return nil, nil
+	}
+	out := make(map[string]string)
+	for _, item := range strings.Split(text, ",") {
+		pair := strings.SplitN(strings.TrimSpace(item), "=", 2)
+		if len(pair) != 2 || strings.TrimSpace(pair[0]) == "" {
+			return nil, fmt.Errorf("附加参数 %q 不是 key=value 形式", item)
+		}
+		out[strings.TrimSpace(pair[0])] = strings.TrimSpace(pair[1])
+	}
+	return out, nil
+}
+
+func formatConnParams(params map[string]string) string {
+	keys := make([]string, 0, len(params))
+	for k := range params {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, k+"="+params[k])
+	}
+	return strings.Join(parts, ",")
+}
+
 func findConn(list []domain.ConnectionConfig, name string) (domain.ConnectionConfig, bool) {
 	for _, c := range list {
 		if c.Name == name {
@@ -131,24 +162,44 @@ func findConn(list []domain.ConnectionConfig, name string) (domain.ConnectionCon
 
 func (u *ui) showConnectionForm(existing *domain.ConnectionConfig) {
 	name := widget.NewEntry()
-	kind := widget.NewSelect([]string{
-		string(domain.KindMySQL), string(domain.KindSQLServer), string(domain.KindMongoDB),
-	}, nil)
 	host := widget.NewEntry()
 	port := widget.NewEntry()
 	user := widget.NewEntry()
 	database := widget.NewEntry()
+	params := widget.NewEntry()
 	tlsMode := widget.NewSelect([]string{"false", "true", "skip-verify", "preferred"}, nil)
 	password := widget.NewPasswordEntry()
 	timeout := widget.NewEntry()
 	readOnly := widget.NewCheck("只读模式（拒绝写语句与结构变更）", nil)
 
+	// 类型下拉框由注册中心动态生成，新增数据库模块时表现层无需改动。
+	kindNames := make([]string, 0, len(provider.Kinds()))
+	for _, k := range provider.Kinds() {
+		kindNames = append(kindNames, string(k))
+	}
+	kind := widget.NewSelect(kindNames, func(selected string) {
+		selectedKind := domain.Kind(selected)
+		port.SetText(strconv.Itoa(domain.DefaultPort(selectedKind)))
+		if selectedKind.IsFileBased() {
+			if existing == nil {
+				host.SetText("")
+			}
+			host.SetPlaceHolder("SQLite 数据库文件路径，如 D:/data/app.db")
+		} else {
+			if strings.TrimSpace(host.Text) == "" {
+				host.SetText("127.0.0.1")
+			}
+			host.SetPlaceHolder("主机地址，如 127.0.0.1")
+		}
+	})
+
 	kind.SetSelected(string(domain.KindMySQL))
 	host.SetText("127.0.0.1")
-	port.SetText("3306")
+	port.SetText(strconv.Itoa(domain.DefaultPort(domain.KindMySQL)))
 	user.SetText("root")
 	tlsMode.SetSelected("false")
 	timeout.SetText("15")
+	params.SetPlaceHolder("附加参数 key=value，逗号分隔（Oracle service / Redis username / SQLite file）")
 
 	if existing != nil {
 		name.SetText(existing.Name)
@@ -157,6 +208,7 @@ func (u *ui) showConnectionForm(existing *domain.ConnectionConfig) {
 		port.SetText(strconv.Itoa(existing.Port))
 		user.SetText(existing.User)
 		database.SetText(existing.Database)
+		params.SetText(formatConnParams(existing.Params))
 		if existing.TLSMode != "" {
 			tlsMode.SetSelected(existing.TLSMode)
 		}
@@ -174,9 +226,13 @@ func (u *ui) showConnectionForm(existing *domain.ConnectionConfig) {
 		if err != nil {
 			return domain.ConnectionConfig{}, fmt.Errorf("超时必须是数字")
 		}
+		parsedParams, err := parseConnParams(params.Text)
+		if err != nil {
+			return domain.ConnectionConfig{}, err
+		}
 		cfg := domain.ConnectionConfig{
 			Name: name.Text, Kind: domain.Kind(kind.Selected), Host: host.Text,
-			Port: p, User: user.Text, Database: database.Text,
+			Port: p, User: user.Text, Database: database.Text, Params: parsedParams,
 			TLSMode: tlsMode.Selected, TimeoutSec: t, ReadOnly: readOnly.Checked,
 		}
 		if existing != nil {
@@ -214,6 +270,7 @@ func (u *ui) showConnectionForm(existing *domain.ConnectionConfig) {
 		widget.NewFormItem("用户名", user),
 		widget.NewFormItem("密码", password),
 		widget.NewFormItem("默认数据库", database),
+		widget.NewFormItem("附加参数", params),
 		widget.NewFormItem("TLS", tlsMode),
 		widget.NewFormItem("连接超时(秒)", timeout),
 		widget.NewFormItem("", readOnly),

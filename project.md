@@ -1,7 +1,7 @@
-# DBClient 项目设计说明
+# db-fly 项目设计说明
 
-> 本文档描述 DBClient 的**业务设计**、**架构设计**与**构建命令**，与当前代码库实现保持一致。
-> 模块路径：`github.com/dbclient/dbclient`；Go 版本：`go 1.25.0`（见 `go.mod`）。
+> 本文档描述 db-fly 的**业务设计**、**架构设计**与**构建命令**，与当前代码库实现保持一致。
+> 模块路径：`github.com/db-fly/db-fly`；Go 版本：`go 1.25.0`（见 `go.mod`）。
 
 ---
 
@@ -9,11 +9,11 @@
 
 ### 1.1 产品定位
 
-DBClient 是一个**模块化、多数据库、跨平台**的数据库客户端：
+db-fly 是一个**模块化、多数据库、跨平台**的数据库客户端：
 
 | 形态 | 平台 | 入口 | 说明 |
 | --- | --- | --- | --- |
-| 桌面 GUI | Windows（CGO） | `cmd/dbclient-gui` | Fyne 桌面应用：连接树、结构浏览、SQL 查询、结果网格、数据编辑 |
+| 桌面 GUI | Windows（CGO） | `cmd/db-fly-gui` | Fyne 桌面应用：连接树、结构浏览、SQL 查询、结果网格、数据编辑 |
 | 命令行 CLI | Linux / Windows（纯 Go） | `cmd/dbctl` | 连接管理、查询、DDL、导入导出、REPL、历史/收藏 |
 
 两种形态**共用同一套业务内核**（`internal/app`）与**同一份本地配置**，因此连接定义、收藏、查询历史、偏好设置在 GUI 与 CLI 之间共享。
@@ -30,41 +30,53 @@ DBClient 是一个**模块化、多数据库、跨平台**的数据库客户端�
 
 能力由各模块 `capabilitySet()` 声明，通用层只查询 `domain.CapabilitySet`：
 
-| 能力 | MySQL | SQL Server | MongoDB | 说明 |
-| --- | :---: | :---: | :---: | --- |
-| `CapCreateDatabase` | ✔ | ✔ | ✔ | Mongo 为创建首个集合隐式建库 |
-| `CapAlterDatabase` | ✔ | ✔ | ✘ | |
-| `CapCreateTable` | ✔ | ✔ | ✔ | Mongo 语义为创建集合 |
-| `CapAlterTable` | ✔ | ✔ | ✔ | Mongo 为改 `$jsonSchema` validator / 索引 |
-| `CapDropObject` | ✔ | ✔ | ✔ | |
-| `CapIndexes` | ✔ | ✔ | ✔ | |
-| `CapForeignKeys` | ✔ | ✔ | ✘ | |
-| `CapSchemas` | ✘ | ✔ | ✘ | SQL Server 为 `database.schema.table` 三层 |
-| `CapSQL` | ✔ | ✔ | ✘ | |
-| `CapMongoFilter` | ✘ | ✘ | ✔ | filter / pipeline JSON 查询 |
-| `CapJSONTree` | ✘ | ✘ | ✔ | 原始 BSON 文档树形展示 |
-| `CapExplain` | ✔ | ✔ | ✔ | MySQL `EXPLAIN`、T-SQL `SET SHOWPLAN_ALL`、Mongo `explain` 命令 |
-| `CapMultiResult` | ✔ | ✔ | ✘ | T-SQL `GO` 批、存储过程多结果集 |
-| `CapTransactions` | ✔ | ✔ | ✘ | Mongo 一期不提供多文档事务 |
-| `CapDataEdit` | ✔ | ✔ | ✔ | 结果集编辑回写 |
+| 能力 | MySQL | SQL Server | MongoDB | PostgreSQL | Oracle | SQLite | Redis | 说明 |
+| --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | --- |
+| `CapCreateDatabase` | ✔ | ✔ | ✔ | ✔ | ✘ | ✘ | ✘ | Mongo 为创建首个集合隐式建库；SQLite 的「库」是文件 |
+| `CapAlterDatabase` | ✔ | ✔ | ✘ | ✔ | ✘ | ✘ | ✘ | |
+| `CapCreateTable` | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | Mongo 为创建集合；Redis 语义为创建键 |
+| `CapAlterTable` | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✘ | SQLite 不支持 `MODIFY COLUMN` |
+| `CapDropObject` | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | |
+| `CapIndexes` | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✘ | |
+| `CapForeignKeys` | ✔ | ✔ | ✘ | ✔ | ✔ | ✔ | ✘ | |
+| `CapSchemas` | ✘ | ✔ | ✘ | ✔ | ✔ | ✘ | ✘ | PG 为 `db.schema.table`；Oracle 的库层级即 schema |
+| `CapSQL` | ✔ | ✔ | ✘ | ✔ | ✔ | ✔ | ✘ | |
+| `CapMongoFilter` | ✘ | ✘ | ✔ | ✘ | ✘ | ✘ | ✘ | filter / pipeline JSON 查询 |
+| `CapKeyValues` | ✘ | ✘ | ✘ | ✘ | ✘ | ✘ | ✔ | Redis 逻辑库 → 键 → 值浏览 |
+| `CapJSONTree` | ✘ | ✘ | ✔ | ✘ | ✘ | ✘ | ✘ | 原始 BSON 文档树形展示 |
+| `CapExplain` | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✘ | Oracle 走 `EXPLAIN PLAN` + `DBMS_XPLAN`；SQLite 为 `EXPLAIN QUERY PLAN` |
+| `CapMultiResult` | ✔ | ✔ | ✘ | ✘ | ✘ | ✘ | ✘ | T-SQL `GO` 批、存储过程多结果集 |
+| `CapTransactions` | ✔ | ✔ | ✘ | ✔ | ✔ | ✔ | ✘ | Mongo 一期不提供多文档事务 |
+| `CapDataEdit` | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✘ | 结果集编辑回写 |
+| `CapTableFilter` | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✘ | 表数据浏览支持 filter / sort |
+| `CapShowCreate` | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | 查看建表 SQL（Redis 为等价创建命令） |
+| `CapTruncateTable` | ✔ | ✔ | ✘ | ✔ | ✔ | ✔ | ✘ | 生成 `TRUNCATE TABLE` 脚本 |
+| `CapEmptyTable` | ✔ | ✔ | ✘ | ✔ | ✔ | ✔ | ✘ | 生成 `DELETE FROM` 脚本 |
 
 ### 1.4 功能清单
 
 **连接与元数据**
-- 连接配置 CRUD、连通性测试、分组/颜色/只读/超时/TLS 参数。
-- 树形浏览：连接 → 数据库 →（SQL Server 的 schema）→ 表/视图/集合。
-- 对象详情：字段、索引、外键、建表 DDL / 集合定义。
+- 连接配置 CRUD、连通性测试、分组/颜色/只读/超时/TLS/附加参数；类型下拉由 provider 注册中心动态生成。
+- 树形浏览：连接 → 数据库 →（SQL Server / PG 的 schema）→ 表/视图/集合；Redis 为连接 → `dbN` → 键。
+- 对象详情：字段、索引、外键、建表 DDL / 集合定义 / Redis 键类型与 TTL。
 
 **查询**
 - SQL 查询、当前光标所在语句执行、选中文本执行、执行计划、超时与取消。
 - MongoDB filter / aggregate pipeline、Extended JSON、集合限定、`explain`、原生数据库命令。
+- Redis 原生命令、SCAN 键浏览、string/hash/list/set/zset 值展开、逻辑库切换、只读连接拒绝写命令。
+- 表数据浏览支持 filter / sort：关系型为 `WHERE` / `ORDER BY` 片段，MongoDB 为 filter / sort 的 Extended JSON，Redis 的 filter 为键匹配模式。
 - 结果集：多结果集页签、列式表格、JSON 文档树、行数上限与截断提示。
 - 输出：`table` / `json` / `csv`；CSV 支持多结果集分文件导出。
 
 **结构与脚本**
 - 建库 / 改库 / 建表 / 改表 / 删对象的结构化表单 → 方言脚本预览 → 确认执行。
-- `Script.Format` 区分 `sql` 与 `mongo_command`，后者为 JSON 命令数组（`createCollection`、`collMod`、`createIndexes` 等）。
-- 自定义脚本执行：SQL 按语句拆分；Mongo 支持命令数组、NDJSON、单个多行 JSON 对象。
+- 「查看建表 SQL」入口展示服务端原始 DDL、元数据反向渲染的 `CREATE TABLE`，或 Redis 等价创建命令；改表表单先展示生成的 ALTER SQL 再确认执行。
+- `Script.Format` 区分 `sql`、`mongo_command` 与 `redis_command`；后两者按命令逐条预览（无分号）。
+- 自定义脚本执行：SQL 按语句拆分；Mongo 支持命令数组、NDJSON、单个多行 JSON 对象；Redis 按行拆分命令。
+
+**表数据维护**
+- 关系型数据库的 `TRUNCATE` 与 `EMPTY(DELETE FROM)`：先确认 → 生成脚本含风险告警 → 只读预览 → 显式确认执行。
+- SQLite 无 `TRUNCATE`，用 `DELETE FROM` + 重置 `sqlite_sequence` 达到等效效果。
 
 **数据编辑与导入**
 - 结果集单元格行编辑：更新 / 删除 / 复制插入；键列自动推断（主键 → 唯一索引 → `_id`），也允许手动指定。
@@ -116,7 +128,7 @@ CLI / GUI → app.Execute / Explain / ExecStatement
 
 ### 1.6 安全设计
 
-- 密码不写入 `config.json`；`secrets.json` 用 Windows DPAPI 或 Linux AES-GCM 加密（密钥来自 `DBCLIENT_MASTER_KEY`，未设置时回退机器本地派生密钥）。
+- 密码不写入 `config.json`；`secrets.json` 用 Windows DPAPI 或 Linux AES-GCM 加密（密钥来自 `DB_FLY_MASTER_KEY`，兼容旧变量 `DBCLIENT_MASTER_KEY`；未设置时回退机器本地派生密钥）。
 - 配置文件权限 `0600`、目录 `0700`；审计日志为 JSONL，语句经 `Sanitize` 脱敏并截断至 1000 字符。
 - 只读连接：拒绝写语句、DDL 脚本与数据回写；CLI 写语句需 `--allow-write`，DDL/导入/回写需 `--yes` 二次确认。
 - 所有数据回写与导入均不拼接用户值，统一使用参数化语句或文档命令；标识符由各模块做方言转义与合法性校验。
@@ -131,6 +143,7 @@ CLI / GUI → app.Execute / Explain / ExecStatement
 | M3 | SQL Server：`sys.*` 元数据、`GO` 拆批、多结果集、schema 层级 | 已完成 |
 | M4 | MongoDB：集合/索引/validator、find/aggregate、BSON 列式投影 + JSON 树 | 已完成 |
 | M5 | 数据编辑回写、SQL/Excel 导入、查询历史与收藏、GUI 多结果集页签 | 已完成 |
+| M6 | PostgreSQL / Oracle / SQLite / Redis 模块；表浏览 filter/sort；建表与改表 SQL 预览；TRUNCATE / EMPTY | 已完成 |
 
 ---
 
@@ -171,12 +184,14 @@ graph TD
 ### 2.2 目录结构
 
 ```
-dbclient/
+db-fly/
 ├── cmd/
 │   ├── dbctl/main.go               # CLI 入口（纯 Go，可 CGO_ENABLED=0）
-│   └── dbclient-gui/
+│   └── db-fly-gui/
 │       ├── main_windows.go         # //go:build windows && cgo
-│       └── main_stub.go            # //go:build !windows || !cgo
+│       ├── main_stub.go            # //go:build !windows || !cgo
+│       ├── notify_windows.go       # //go:build windows，MessageBox + 启动日志
+│       └── notify_other.go         # //go:build !windows
 ├── internal/
 │   ├── domain/
 │   │   ├── entity.go               # Kind / Capability / 实体与值对象
@@ -223,10 +238,13 @@ dbclient/
 | `QueryExecutor` | 查询与无结果集语句 | `Execute`、`Exec`、`Explain` |
 | `ResultSet` | 流式结果集 | `Columns`、`Next`、`Row`、`Document`、`NextResultSet`、`Close` |
 | `DataEditor` | 结果集数据回写 | `Preview`、`Apply` |
+| `TableMaintenance`（可选） | 清空表数据脚本 | `TableActionScript`；不支持的模块返回 `nil` |
 
-核心实体（`entity.go`）：`ConnectionConfig`、`Script`、`Query`、`ResultPage`、`QueryOutcome`、`EditRequest` / `RowEdit` / `EditResult`、`TableSchema` / `ColumnSpec` / `SchemaChange` 等。
+核心实体（`entity.go`）：`ConnectionConfig`、`Script`（含 `Database` 用于按库分池）、`Query`（含 `Filter` / `Sort`）、`ResultPage`、`QueryOutcome`、`EditRequest` / `RowEdit` / `EditResult`、`TableSchema` / `ColumnSpec` / `SchemaChange`、`TableAction` 等。
 
-`Query.Ref` 非空且 `Text` 为空时表示「预览该对象的数据」，由各 provider 自行生成方言语句（MySQL `LIMIT`、SQL Server `SELECT TOP`、Mongo 空 filter），通用层不拼 SQL。
+`Query.Ref` 非空且 `Text` 为空时表示「预览该对象的数据」，由各 provider 自行生成方言语句（MySQL `LIMIT`、SQL Server `SELECT TOP`、Oracle `FETCH FIRST`、Mongo 空 filter），通用层不拼 SQL；`Filter` / `Sort` 的语义由模块自行解释。
+
+关系型模块共用 `internal/provider/sqlkit`（非数据库模块）：标识符引用、片段安全校验、通用流式/内存结果集、filter/sort 解析、参数化数据编辑、DDL 脚本装配与 `ScriptRunner`；PostgreSQL 通过 `PoolSet` 按库懒建连接池。
 
 ### 2.4 会话与连接管理
 
@@ -259,7 +277,7 @@ dbclient/
 
 ### 2.8 本地数据
 
-默认数据目录 `~/.dbclient`，CLI 可用全局 `--data-dir` 覆盖：
+默认数据目录 `~/.db-fly`，CLI 可用全局 `--data-dir` 覆盖。兼容升级：若 `~/.db-fly` 不存在而旧版 `~/.dbclient` 存在，程序会自动沿用旧目录，已有连接与凭证不会丢失：
 
 | 文件 | 内容 | 权限 |
 | --- | --- | --- |
@@ -274,8 +292,10 @@ dbclient/
 | --- | --- | --- |
 | `internal/gui/*.go`（`stub.go` 除外） | `//go:build windows && cgo` | 真实 Fyne GUI |
 | `internal/gui/stub.go` | `//go:build !windows \|\| !cgo` | 无 GUI 环境下 `Run()` 返回提示错误 |
-| `cmd/dbclient-gui/main_windows.go` | `//go:build windows && cgo` | GUI 入口 |
-| `cmd/dbclient-gui/main_stub.go` | `//go:build !windows \|\| !cgo` | 占位入口 |
+| `cmd/db-fly-gui/main_windows.go` | `//go:build windows && cgo` | GUI 入口 |
+| `cmd/db-fly-gui/main_stub.go` | `//go:build !windows \|\| !cgo` | 占位入口（Windows 下弹窗提示需要 CGO/gcc） |
+| `cmd/db-fly-gui/notify_windows.go` | `//go:build windows` | 无控制台时 MessageBox 提示、启动日志与 panic 兜底 |
+| `cmd/db-fly-gui/notify_other.go` | `//go:build !windows` | 非 Windows 空实现 |
 | `internal/provider/mysql/integration_test.go` | `//go:build integration` | 需真实 MySQL 的集成测试 |
 
 CLI 与全部非 GUI 代码均为纯 Go，可在 Linux 下 `CGO_ENABLED=0` 静态编译。无 gcc 的 Windows 环境通过 `go build -tags "ci cgo" ./...` 使用 Fyne 的 `ci`（headless）标签仅做 GUI 类型检查，不产出可执行 GUI。
@@ -289,13 +309,17 @@ CLI 与全部非 GUI 代码均为纯 Go，可在 Linux 下 `CGO_ENABLED=0` 静�
 | `github.com/go-sql-driver/mysql` | v1.10.1 | MySQL 驱动 |
 | `github.com/microsoft/go-mssqldb` | v1.11.2 | SQL Server 驱动 |
 | `go.mongodb.org/mongo-driver/v2` | v2.10.0 | MongoDB 驱动 |
+| `github.com/jackc/pgx/v5` | v5.7.6 | PostgreSQL 驱动（纯 Go，无 CGO） |
+| `github.com/sijms/go-ora/v2` | v2.9.0 | Oracle 驱动（纯 Go，无需 Instant Client） |
+| `modernc.org/sqlite` | v1.38.2 | SQLite 驱动（纯 Go，无 CGO） |
+| `github.com/redis/go-redis/v9` | v9.14.0 | Redis 客户端 |
 | `github.com/xuri/excelize/v2` | v2.9.1 | Excel 导入 |
 
 ---
 
 ## 3. 构建命令
 
-以下命令均在仓库根目录 `d:/workspace/dbclient` 执行。
+以下命令均在仓库根目录执行。
 
 ### 3.1 环境要求
 
@@ -343,7 +367,7 @@ GOOS_TARGET=windows GOARCH_TARGET=amd64 OUTPUT=dist/dbctl.exe VERSION=v1.0.0 bas
 ```bash
 CGO_ENABLED=0 GOOS="$GOOS_TARGET" GOARCH="$GOARCH_TARGET" \
   go build -trimpath \
-  -ldflags "-s -w -X github.com/dbclient/dbclient/internal/cli.Version=${VERSION}" \
+  -ldflags "-s -w -X github.com/db-fly/db-fly/internal/cli.Version=${VERSION}" \
   -o "$OUTPUT" ./cmd/dbctl
 ```
 
@@ -351,7 +375,7 @@ CGO_ENABLED=0 GOOS="$GOOS_TARGET" GOARCH="$GOARCH_TARGET" \
 
 ```powershell
 $env:CGO_ENABLED = "0"
-go build -trimpath -ldflags "-s -w -X github.com/dbclient/dbclient/internal/cli.Version=dev" -o dist/dbctl.exe ./cmd/dbctl
+go build -trimpath -ldflags "-s -w -X github.com/db-fly/db-fly/internal/cli.Version=dev" -o dist/dbctl.exe ./cmd/dbctl
 ```
 
 **不产出文件的快速编译检查**
@@ -364,20 +388,23 @@ go build ./...
 
 ```powershell
 ./build/gui.ps1
-# 或指定版本：
-$env:VERSION = "v1.0.0"; ./build/gui.ps1
 ```
 
-`build/gui.ps1` 实际执行（`CGO_ENABLED=1`，需要 gcc）：
+脚本会自动探测 `gcc`（PATH 或 MSYS2 / TDM-GCC / scoop 常见安装路径）、强制 `CGO_ENABLED=1`，并在构建后用 `go version -m` 校验产物确实含 `CGO_ENABLED=1`；不满足时删除产物并报错，避免生成双击无反应的占位程序。
+
+手动直接构建时**必须先设置 CGO 环境**，否则 `cmd/db-fly-gui/main_stub.go` 会被编译进去：
 
 ```powershell
-go build -trimpath `
-  -ldflags "-s -w -H windowsgui -X github.com/dbclient/dbclient/internal/cli.Version=$version" `
-  -o dist/dbclient-gui.exe ./cmd/dbclient-gui
+$env:CGO_ENABLED = "1"
+$env:PATH = "C:\msys64\ucrt64\bin;$env:PATH"   # mingw-w64 gcc 所在目录
+go build -trimpath -ldflags "-s -w -H windowsgui" -o dist/db-fly-gui.exe ./cmd/db-fly-gui
 ```
 
-> `-H windowsgui` 使 GUI 程序不弹出控制台窗口。若需要带图标的安装包，可用 `fyne package` 进一步打包。
-> 无 gcc 时只能执行 `go build -tags "ci cgo" ./...` 做类型检查，不能产出 `dbclient-gui.exe`。
+> `go env CGO_ENABLED` 在没有 C 编译器时默认为 `0`：真实 GUI 文件（`windows && cgo`）被排除，产物只是打印一行提示就退出的占位程序；`-H windowsgui` 又不分配控制台，因此双击表现为「打不开」。
+> `-X ...internal/cli.Version` 只适用于 `dbctl`（GUI 未链接 `internal/cli`，注入会被链接器忽略），GUI 构建不需要该参数；版本注入见 `build/cli.sh`。
+> `-H windowsgui` 使 GUI 程序不弹出控制台窗口；启动错误由 `cmd/db-fly-gui/notify_windows.go` 写入 `%TEMP%\db-fly\gui-startup.log` 并通过 MessageBox 提示。若需要带图标的安装包，可用 `fyne package` 进一步打包。
+> 无 gcc 时只能执行 `go build -tags "ci cgo" ./...` 做类型检查，不能产出 `db-fly-gui.exe`。
+> 用其他 gcc 构建时若双击报缺少 `libwinpthread-1.dll` 等依赖，可把该 DLL 复制到 `dist/`，或追加 `-ldflags "-linkmode external -extldflags=-static"` 静态链接。
 
 ### 3.5 测试
 
@@ -402,27 +429,42 @@ go mod tidy
 
 ### 3.7 CLI 命令速查
 
-全局参数：`--data-dir <目录>`（默认 `~/.dbclient`）。
+全局参数：`--data-dir <目录>`（默认 `~/.db-fly`）。
 
 ```bash
-# 连接
-dbctl conn add --name dev --kind mysql --host 127.0.0.1 --port 3306 --user root
+# 连接（--port 省略时按 --kind 取默认端口；SQLite 的 --host 是文件路径）
+dbctl conn add --name dev --kind mysql --host 127.0.0.1 --user root
+dbctl conn add --name pg --kind postgresql --host 127.0.0.1 --user postgres --database appdb
+dbctl conn add --name ora --kind oracle --host 127.0.0.1 --user scott --params service=XEPDB1
+dbctl conn add --name lite --kind sqlite --host D:/data/app.db
+dbctl conn add --name cache --kind redis --host 127.0.0.1 --database db0
 dbctl conn list
 dbctl conn test dev
 dbctl conn rm dev
 
-# 查询（SQL / MongoDB）
+# 查询（SQL / MongoDB / Redis）
 dbctl query --conn dev --sql "SELECT * FROM db.t" --format table
 dbctl query --conn dev --sql '{"status":"A"}' --language mongo_filter --collection orders
+dbctl query --conn cache --sql "SCAN 0 MATCH user:* COUNT 100" --language redis
 dbctl query --conn dev --file script.sql --format csv --output result.csv
 dbctl query --conn dev --sql "SELECT 1" --save daily
 dbctl query --conn dev --sql "UPDATE t SET a=1" --allow-write
 
+# 表数据浏览（filter / sort）与清空表数据
+dbctl data browse --conn dev --database db --table t --filter "age > 18" --sort "id DESC"
+dbctl data browse --conn dev --collection orders --filter '{"age":{"$gt":18}}' --sort '{"age":-1}'
+dbctl data browse --conn cache --database db0 --filter "user:*"
+dbctl data truncate --conn dev --database db --table t            # 仅预览
+dbctl data truncate --conn dev --database db --table t --apply --yes
+dbctl data empty --conn dev --database db --table t --apply --yes
+
 # 结构与脚本
 dbctl db list --conn dev
 dbctl schema show --conn dev --database db --table t
+dbctl schema ddl --conn dev --database db --table t
 dbctl schema create-table --conn dev --def table.json --apply --yes
 dbctl schema apply --conn dev --file commands.json --format mongo_command
+dbctl schema apply --conn cache --file commands.redis --format redis_command
 
 # 数据编辑与导入
 dbctl edit keys --conn dev --database db --table t
@@ -451,19 +493,19 @@ dbctl info
 
 | 变量 | 用途 |
 | --- | --- |
-| `VERSION` | 构建脚本注入的版本号（写入 `internal/cli.Version`） |
+| `VERSION` | `build/cli.sh` 注入的版本号（写入 `internal/cli.Version`，仅 CLI 使用；GUI 不链接该包） |
 | `GOOS_TARGET` / `GOARCH_TARGET` / `OUTPUT` | `build/cli.sh` 的交叉编译目标与输出路径 |
-| `DBCLIENT_MASTER_KEY` | Linux 下凭证加密主密钥；未设置时使用机器本地派生密钥并打印告警 |
+| `DB_FLY_MASTER_KEY` | Linux 下凭证加密主密钥（兼容旧变量 `DBCLIENT_MASTER_KEY`）；未设置时使用机器本地派生密钥并打印告警 |
 | `MYSQL_DSN` | MySQL 集成测试 DSN |
 
 ---
 
 ## 4. 扩展指引
 
-新增一种数据库类型（如 PostgreSQL）：
+新增一种数据库类型（参考 `internal/provider/postgres/` 与 `internal/provider/sqlite/`）：
 
-1. 在 `internal/domain/entity.go` 的 `Kind` 常量与 `AllKinds()` / `Valid()` / `DefaultPort()` 中登记。
-2. 新建 `internal/provider/postgres/`，实现 `domain.Provider` 与 6 个端口，声明 `capabilitySet()`，在 `init()` 中调用 `provider.Register()`。
-3. 在 `internal/provider/all/all.go` 添加一行空白导入。
-4. 通用层无需修改：GUI 菜单、CLI 语言选择、脚本预览、导入与编辑路径均由能力声明与端口契约驱动。
-5. 补充该模块的纯函数单元测试，并执行 `./build/verify.ps1`。
+1. 在 `internal/domain/entity.go` 的 `Kind` 常量与 `AllKinds()` / `Valid()` / `DefaultPort()` 中登记；文件型数据库实现 `IsFileBased()`，关系型登记 `IsRelational()`。
+2. 新建 `internal/provider/<name>/`，实现 `domain.Provider` 与端口契约（`MetadataBrowser`、`SchemaEditor`、`QueryExecutor`、`DataEditor`、`Session`），声明 `capabilitySet()`，在 `init()` 中调用 `provider.Register()`。需要清空表能力时额外实现 `Session.Maintenance() domain.TableMaintenance`，否则返回 `nil`。
+3. 关系型模块优先复用 `internal/provider/sqlkit`：`BuildPreview` 负责 filter/sort 与分页，`Editor` 负责参数化回写，`Schema` + `ScriptRunner` 负责 DDL 脚本装配；只需实现方言元数据查询与 `DDLDriver`。
+4. 在 `internal/provider/all/all.go` 添加一行空白导入；GUI 连接类型下拉、CLI 默认端口与语言选择均由注册中心与能力声明驱动。
+5. 补充该模块的纯函数单元测试（可参照 SQLite 端到端测试），并执行 `./build/verify.ps1`。

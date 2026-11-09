@@ -7,14 +7,15 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dbclient/dbclient/internal/app"
-	"github.com/dbclient/dbclient/internal/domain"
-	"github.com/dbclient/dbclient/internal/platform/config"
+	"github.com/db-fly/db-fly/internal/app"
+	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/db-fly/db-fly/internal/platform/config"
 )
 
 // queryOptions 是 query 与 favorite run 共用的执行参数。
 type queryOptions struct {
 	conn, text, database, collection, language, format, output, save string
+	filter, sort                                                     string
 	maxRows, timeout                                                 int
 	explain, allowWrite, exec                                        bool
 }
@@ -22,6 +23,7 @@ type queryOptions struct {
 func (c *cli) queryCmd() *cobra.Command {
 	var (
 		conn, sqlText, file, database, collection, language, format, output, save string
+		filter, sortText                                                          string
 		maxRows, timeout                                                          int
 		explain, allowWrite, useStdin, exec                                       bool
 	)
@@ -40,6 +42,7 @@ func (c *cli) queryCmd() *cobra.Command {
 			return c.runQuery(cmd.Context(), cmd, queryOptions{
 				conn: conn, text: text, database: database, collection: collection,
 				language: language, format: format, output: output, save: save,
+				filter: filter, sort: sortText,
 				maxRows: maxRows, timeout: timeout,
 				explain: explain, allowWrite: allowWrite, exec: exec,
 			})
@@ -50,7 +53,11 @@ func (c *cli) queryCmd() *cobra.Command {
 	cmd.Flags().StringVar(&file, "file", "", "从文件读取查询文本")
 	cmd.Flags().StringVar(&database, "database", "", "当前数据库（语句将在该库的同一连接上执行）")
 	cmd.Flags().StringVar(&collection, "collection", "", "MongoDB 集合名")
-	cmd.Flags().StringVar(&language, "language", "auto", "查询语言: auto/sql/mongo_filter/mongo_pipeline")
+	cmd.Flags().StringVar(&filter, "filter", "",
+		"过滤条件：关系型为 WHERE 片段，MongoDB 为 filter JSON，Redis 为键匹配模式")
+	cmd.Flags().StringVar(&sortText, "sort", "",
+		"排序条件：关系型为 ORDER BY 片段（如 \"id DESC\"），MongoDB 为 sort JSON")
+	cmd.Flags().StringVar(&language, "language", "auto", "查询语言: auto/sql/mongo_filter/mongo_pipeline/redis")
 	cmd.Flags().StringVar(&format, "format", "table", "输出格式: table/json/csv")
 	cmd.Flags().StringVar(&output, "output", "", "输出到文件（默认标准输出）")
 	cmd.Flags().StringVar(&save, "save", "", "同时把本次查询保存为指定名称的收藏")
@@ -74,8 +81,10 @@ func parseLanguage(s string) (domain.QueryLanguage, error) {
 		return domain.LangMongoFilter, nil
 	case "pipeline", "aggregate", "mongo_pipeline":
 		return domain.LangMongoPipeline, nil
+	case "redis", "redis_command":
+		return domain.LangRedis, nil
 	default:
-		return "", fmt.Errorf("不支持的查询语言 %q（可用 auto/sql/mongo_filter/mongo_pipeline）", s)
+		return "", fmt.Errorf("不支持的查询语言 %q（可用 auto/sql/mongo_filter/mongo_pipeline/redis）", s)
 	}
 }
 
@@ -98,6 +107,9 @@ func (c *cli) defaultLanguage(conn string) (domain.QueryLanguage, error) {
 		}
 		if caps.Has(domain.CapMongoFilter) {
 			return domain.LangMongoFilter, nil
+		}
+		if caps.Has(domain.CapKeyValues) {
+			return domain.LangRedis, nil
 		}
 	}
 	return domain.LangSQL, nil
@@ -147,7 +159,9 @@ func (c *cli) runQuery(ctx context.Context, cmd *cobra.Command, o queryOptions) 
 		// filter / pipeline 是完整 JSON 文本，不能按 SQL 分号拆句。
 		q := domain.Query{
 			Language: lang, Text: o.text, Database: o.database, Collection: o.collection,
+			Filter: o.filter, Sort: o.sort,
 			MaxRows: o.maxRows, TimeoutSec: o.timeout,
+			ReadOnly: !o.allowWrite,
 		}
 		var out domain.QueryOutcome
 		if o.explain {
@@ -172,6 +186,7 @@ func (c *cli) runQuery(ctx context.Context, cmd *cobra.Command, o queryOptions) 
 		}
 		q := domain.Query{
 			Language: domain.LangSQL, Text: stmt, Database: o.database,
+			Filter: o.filter, Sort: o.sort,
 			MaxRows: o.maxRows, TimeoutSec: o.timeout,
 		}
 		if app.CheckReadOnly(stmt) != nil {

@@ -8,7 +8,7 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 
-	"github.com/dbclient/dbclient/internal/domain"
+	"github.com/db-fly/db-fly/internal/domain"
 )
 
 type queryExecutor struct {
@@ -55,7 +55,7 @@ func parseQuerySpec(q domain.Query) (*querySpec, error) {
 				return nil, err
 			}
 			spec.Pipeline = pipeline
-			return spec, nil
+			return spec, applyBrowseConditions(spec, q)
 		}
 		doc, err := parseExtJSON(text)
 		if err != nil {
@@ -71,7 +71,7 @@ func parseQuerySpec(q domain.Query) (*querySpec, error) {
 				"聚合查询需要 pipeline 数组")
 		}
 		applyMeta(spec, doc)
-		return spec, nil
+		return spec, applyBrowseConditions(spec, q)
 	}
 
 	doc, err := parseExtJSON(text)
@@ -90,7 +90,38 @@ func parseQuerySpec(q domain.Query) (*querySpec, error) {
 		return nil, domain.NewError(domain.CodeValidation, "mongo.query",
 			"请通过 --collection / collection 字段指定集合")
 	}
-	return spec, nil
+	return spec, applyBrowseConditions(spec, q)
+}
+
+// applyBrowseConditions 把表数据浏览面板中的 filter / sort 覆盖到查询上。
+// 两者都是 Extended JSON 文本（如 {"age":{"$gt":18}} 与 {"age":-1}）。
+func applyBrowseConditions(spec *querySpec, q domain.Query) error {
+	filter := strings.TrimSpace(q.Filter)
+	sortText := strings.TrimSpace(q.Sort)
+	if filter == "" && sortText == "" {
+		return nil
+	}
+	if spec.Pipeline != nil {
+		return domain.NewError(domain.CodeValidation, "mongo.query",
+			"聚合管道模式下请直接在 pipeline 中使用 $match / $sort 阶段")
+	}
+	if filter != "" {
+		doc, err := parseExtJSON(filter)
+		if err != nil {
+			return domain.WrapError(domain.CodeValidation, "mongo.query", err,
+				"表数据浏览的 filter 不是合法 JSON")
+		}
+		spec.Filter = doc
+	}
+	if sortText != "" {
+		doc, err := parseExtJSON(sortText)
+		if err != nil {
+			return domain.WrapError(domain.CodeValidation, "mongo.query", err,
+				"表数据浏览的 sort 不是合法 JSON")
+		}
+		spec.Sort = doc
+	}
+	return nil
 }
 
 func applyMeta(spec *querySpec, doc bson.M) {

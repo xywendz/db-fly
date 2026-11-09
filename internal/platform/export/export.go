@@ -8,7 +8,7 @@ import (
 	"io"
 	"text/tabwriter"
 
-	"github.com/dbclient/dbclient/internal/domain"
+	"github.com/db-fly/db-fly/internal/domain"
 )
 
 // CSV 输出单个结果页为 CSV，NULL 输出空字符串。

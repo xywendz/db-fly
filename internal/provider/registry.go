@@ -8,7 +8,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/dbclient/dbclient/internal/domain"
+	"github.com/db-fly/db-fly/internal/domain"
 )
 
 var (

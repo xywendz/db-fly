@@ -10,8 +10,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dbclient/dbclient/internal/domain"
-	"github.com/dbclient/dbclient/internal/platform/export"
+	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/db-fly/db-fly/internal/platform/export"
 )
 
 func readSQL(sqlText, file string, useStdin bool) (string, error) {
@@ -149,15 +149,13 @@ func writeTableOutcomes(w io.Writer, outcomes []domain.QueryOutcome) error {
 
 // printScript 输出可预览的方言脚本（SQL 或 MongoDB JSON 命令），含警告与回滚。
 func printScript(w io.Writer, script domain.Script) {
-	comment := "--"
-	if script.Format == "mongo_command" {
-		comment = "//"
-	}
+	comment := scriptComment(script.Format)
+	isSQL := script.Format == "" || script.Format == "sql"
 	for i, stmt := range script.Statements {
-		if script.Format == "mongo_command" {
-			fmt.Fprintf(w, "%s 命令 %d\n%s\n", comment, i+1, stmt)
-		} else {
+		if isSQL {
 			fmt.Fprintf(w, "%s 语句 %d\n%s;\n", comment, i+1, stmt)
+		} else {
+			fmt.Fprintf(w, "%s 命令 %d\n%s\n", comment, i+1, stmt)
 		}
 	}
 	for _, warn := range script.Warnings {

@@ -13,7 +13,7 @@ import (
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
 
-	"github.com/dbclient/dbclient/internal/domain"
+	"github.com/db-fly/db-fly/internal/domain"
 )
 
 type nodeKind int
@@ -245,14 +245,22 @@ func (u *ui) showAlterDatabase() {
 func (u *ui) showScriptDialog(title, conn string, script domain.Script) {
 	var b strings.Builder
 	comment := "--"
-	if script.Format == "mongo_command" {
+	isSQL := script.Format == "" || script.Format == "sql"
+	switch {
+	case script.Format == "mongo_command":
 		comment = "//"
+	case strings.Contains(script.Format, "redis"):
+		comment = "#"
+	}
+	suffix := ";"
+	if !isSQL {
+		suffix = ""
 	}
 	for i, stmt := range script.Statements {
-		if script.Format == "mongo_command" {
-			fmt.Fprintf(&b, "%s 命令 %d\n%s\n\n", comment, i+1, stmt)
-		} else {
+		if isSQL {
 			fmt.Fprintf(&b, "%s 语句 %d\n%s;\n\n", comment, i+1, stmt)
+		} else {
+			fmt.Fprintf(&b, "%s 命令 %d\n%s\n\n", comment, i+1, stmt)
 		}
 	}
 	for _, warn := range script.Warnings {
@@ -261,11 +269,7 @@ func (u *ui) showScriptDialog(title, conn string, script domain.Script) {
 	if len(script.Rollback) > 0 {
 		fmt.Fprintf(&b, "\n%s 回滚脚本（best-effort，执行前请人工复核）\n", comment)
 		for _, stmt := range script.Rollback {
-			if script.Format == "mongo_command" {
-				fmt.Fprintf(&b, "%s %s\n", comment, stmt)
-			} else {
-				fmt.Fprintf(&b, "%s %s;\n", comment, stmt)
-			}
+			fmt.Fprintf(&b, "%s %s%s\n", comment, stmt, suffix)
 		}
 	}
 	preview := widget.NewMultiLineEntry()

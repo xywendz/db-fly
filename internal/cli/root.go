@@ -7,12 +7,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dbclient/dbclient/internal/app"
-	"github.com/dbclient/dbclient/internal/platform/audit"
-	"github.com/dbclient/dbclient/internal/platform/config"
-	"github.com/dbclient/dbclient/internal/platform/credential"
-	"github.com/dbclient/dbclient/internal/provider"
-	_ "github.com/dbclient/dbclient/internal/provider/all"
+	"github.com/db-fly/db-fly/internal/app"
+	"github.com/db-fly/db-fly/internal/platform/audit"
+	"github.com/db-fly/db-fly/internal/platform/config"
+	"github.com/db-fly/db-fly/internal/platform/credential"
+	"github.com/db-fly/db-fly/internal/provider"
+	_ "github.com/db-fly/db-fly/internal/provider/all"
 )
 
 // Version 由构建脚本通过 -ldflags 注入。
@@ -36,17 +36,18 @@ func Execute() error {
 func (c *cli) rootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "dbctl",
-		Short:         "DBClient 命令行数据库工具",
-		Long:          "dbctl 是 DBClient 的命令行形态，与 Windows GUI 共用同一套业务内核与连接配置。",
+		Short:         "db-fly 命令行数据库工具",
+		Long:          "dbctl 是 db-fly 的命令行形态，与 Windows GUI 共用同一套业务内核与连接配置。",
 		Version:       Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.PersistentFlags().StringVar(&c.dataDir, "data-dir", "", "数据目录（默认 ~/.dbclient）")
+	root.PersistentFlags().StringVar(&c.dataDir, "data-dir", "", "数据目录（默认 ~/.db-fly）")
 	root.PersistentPreRunE = func(_ *cobra.Command, _ []string) error { return c.init() }
 	root.AddCommand(
 		c.connCmd(),
 		c.queryCmd(),
+		c.dataCmd(),
 		c.schemaCmd(),
 		c.databaseCmd(),
 		c.replCmd(),
@@ -81,9 +82,10 @@ func (c *cli) init() error {
 	}
 	c.app = app.New(cfg, secrets, logger)
 
-	if secrets.Name() == "aes-gcm" && os.Getenv("DBCLIENT_MASTER_KEY") == "" {
+	if secrets.Name() == "aes-gcm" &&
+		os.Getenv("DB_FLY_MASTER_KEY") == "" && os.Getenv("DBCLIENT_MASTER_KEY") == "" {
 		fmt.Fprintln(os.Stderr,
-			"警告：未设置 DBCLIENT_MASTER_KEY，凭证使用机器本地派生密钥加密，建议显式设置以提高安全性。")
+			"警告：未设置 DB_FLY_MASTER_KEY，凭证使用机器本地派生密钥加密，建议显式设置以提高安全性。")
 	}
 	return nil
 }

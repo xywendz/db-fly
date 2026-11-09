@@ -13,8 +13,9 @@ import (
 
 	gsmssql "github.com/microsoft/go-mssqldb"
 
-	"github.com/dbclient/dbclient/internal/domain"
-	"github.com/dbclient/dbclient/internal/provider"
+	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/db-fly/db-fly/internal/provider"
+	"github.com/db-fly/db-fly/internal/provider/sqlkit"
 )
 
 type providerImpl struct{}
@@ -97,6 +98,30 @@ func (s *session) Query() domain.QueryExecutor        { return &queryExecutor{db
 func (s *session) Data() domain.DataEditor            { return &dataEditor{db: s.db} }
 func (s *session) Close() error                       { return s.db.Close() }
 
+// Maintenance 生成 TRUNCATE / DELETE FROM 的可预览脚本；首条 USE 保证库上下文一致。
+func (s *session) Maintenance() domain.TableMaintenance {
+	return sqlkit.TableOps{
+		Name: "sqlserver",
+		Qualified: func(ref domain.ObjectRef) (string, error) {
+			return quoteQualified("", defaultSchema(ref.Schema), ref.Name)
+		},
+		Statements: func(action domain.TableAction, ref domain.ObjectRef, qualified string) ([]string, error) {
+			use, err := useStatement(ref.Database)
+			if err != nil {
+				return nil, err
+			}
+			var statement string
+			switch action {
+			case domain.TableActionTruncate:
+				statement = "TRUNCATE TABLE " + qualified
+			default:
+				statement = "DELETE FROM " + qualified
+			}
+			return append(use, statement), nil
+		},
+	}
+}
+
 func (s *session) ServerInfo(ctx context.Context) (domain.ServerInfo, error) {
 	var version, edition string
 	if err := s.db.QueryRowContext(ctx,
@@ -135,6 +160,10 @@ func capabilitySet() domain.CapabilitySet {
 		domain.CapMultiResult:    true,
 		domain.CapTransactions:   true,
 		domain.CapDataEdit:       true,
+		domain.CapTableFilter:    true,
+		domain.CapShowCreate:     true,
+		domain.CapTruncateTable:  true,
+		domain.CapEmptyTable:     true,
 	}
 }
 

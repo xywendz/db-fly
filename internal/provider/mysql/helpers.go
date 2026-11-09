@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/dbclient/dbclient/internal/domain"
+	"github.com/db-fly/db-fly/internal/domain"
 )
 
 var safeTokenRe = regexp.MustCompile(`^[A-Za-z0-9_]+$`)

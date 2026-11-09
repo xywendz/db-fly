@@ -2,11 +2,13 @@ package app
 
 import (
 	"context"
+	"strings"
 	"time"
 
-	"github.com/dbclient/dbclient/internal/domain"
-	"github.com/dbclient/dbclient/internal/platform/audit"
-	"github.com/dbclient/dbclient/internal/platform/config"
+	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/db-fly/db-fly/internal/platform/audit"
+	"github.com/db-fly/db-fly/internal/platform/config"
+	"github.com/db-fly/db-fly/internal/provider"
 )
 
 // ResultSink 是流式结果的呈现端口。GUI 实现为分批刷新表格，CLI 实现为累积输出。
@@ -45,9 +47,20 @@ func (a *App) prepareQuery(ctx context.Context, conn string, q domain.Query) (do
 		return nil, c, q, 0, err
 	}
 	if q.Language == "" {
+		// 由模块能力声明决定默认语言，通用层不按 Kind 分支。
 		q.Language = domain.LangSQL
+		if caps, capErr := provider.Capabilities(c.Kind); capErr == nil {
+			switch {
+			case caps.Has(domain.CapKeyValues):
+				q.Language = domain.LangRedis
+			case caps.Has(domain.CapMongoFilter):
+				q.Language = domain.LangMongoFilter
+			}
+		}
 	}
-	if q.Text == "" && q.Ref.Name == "" {
+	// Filter 非空且未指定对象时是「全库扫描/键匹配」模式（如 Redis SCAN），
+	// 由模块自行决定是否支持；通用层只负责放行请求。
+	if q.Text == "" && q.Ref.Name == "" && strings.TrimSpace(q.Filter) == "" {
 		return nil, c, q, 0, domain.NewError(domain.CodeValidation, "query", "查询内容不能为空")
 	}
 	if q.Database == "" && q.Ref.Database != "" {

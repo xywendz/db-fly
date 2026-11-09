@@ -8,7 +8,7 @@ import (
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 
-	"github.com/dbclient/dbclient/internal/domain"
+	"github.com/db-fly/db-fly/internal/domain"
 )
 
 // schemaEditor 生成 MongoDB 命令式脚本（JSON），而非 SQL。
@@ -39,7 +39,7 @@ func (e *schemaEditor) CreateDatabaseScript(ctx context.Context, spec domain.Dat
 		return domain.Script{}, err
 	}
 	stmt, err := encodeCommand(mongoCommand{
-		Action: "createDatabase", Database: spec.Name, Collection: "_dbclient_init",
+		Action: "createDatabase", Database: spec.Name, Collection: "_dbfly_init",
 	})
 	if err != nil {
 		return domain.Script{}, err
@@ -49,7 +49,7 @@ func (e *schemaEditor) CreateDatabaseScript(ctx context.Context, spec domain.Dat
 		return domain.Script{}, err
 	}
 	return commandScript([]string{stmt}, []string{rollback}, []string{
-		"MongoDB 没有独立的建库命令，通过创建首个集合 _dbclient_init 使数据库落盘。",
+		"MongoDB 没有独立的建库命令，通过创建首个集合 _dbfly_init 使数据库落盘。",
 		"回滚会删除整个数据库及其全部集合。",
 	}), nil
 }
@@ -262,7 +262,7 @@ func (e *schemaEditor) runCommand(ctx context.Context, cmd mongoCommand) error {
 	case "createDatabase":
 		name := cmd.Collection
 		if name == "" {
-			name = "_dbclient_init"
+			name = "_dbfly_init"
 		}
 		return mapQueryError(db.CreateCollection(ctx, name))
 	case "dropDatabase":

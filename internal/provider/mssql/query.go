@@ -6,7 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/dbclient/dbclient/internal/domain"
+	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/db-fly/db-fly/internal/provider/sqlkit"
 )
 
 type queryExecutor struct {
@@ -39,17 +40,20 @@ func (e *queryExecutor) Execute(ctx context.Context, q domain.Query) (domain.Res
 		return nil, domain.NewError(domain.CodeUnsupported, "sqlserver.query",
 			"SQL Server 模块只支持 T-SQL，收到 %q", q.Language)
 	}
-	if strings.TrimSpace(q.Text) == "" && q.Ref.Name != "" {
-		qualified, err := quoteQualified("", q.Ref.Schema, q.Ref.Name)
-		if err != nil {
-			return nil, err
-		}
-		top := q.MaxRows
-		if top <= 0 {
-			top = domain.DefaultMaxRows
-		}
-		q.Text = fmt.Sprintf("SELECT TOP %d * FROM %s", top, qualified)
+	// 表数据浏览支持 filter / sort：由通用构建器按 T-SQL 方言生成 SELECT。
+	statement, err := sqlkit.BuildPreview(sqlkit.SelectDialect{
+		Quoter: sqlkit.TSQLQuoter,
+		Qualified: func(ref domain.ObjectRef) (string, error) {
+			return quoteQualified("", defaultSchema(ref.Schema), ref.Name)
+		},
+		TopPrefix: func(limit int) string {
+			return fmt.Sprintf("TOP %d ", limit)
+		},
+	}, q)
+	if err != nil {
+		return nil, err
 	}
+	q.Text = statement
 	batches := splitBatches(q.Text)
 	if len(batches) == 0 {
 		return nil, domain.NewError(domain.CodeValidation, "sqlserver.query", "查询内容不能为空")

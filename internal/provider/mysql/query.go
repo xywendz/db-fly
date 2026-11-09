@@ -6,7 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/dbclient/dbclient/internal/domain"
+	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/db-fly/db-fly/internal/provider/sqlkit"
 )
 
 type queryExecutor struct {
@@ -113,25 +114,15 @@ func (e *queryExecutor) Explain(ctx context.Context, q domain.Query) (domain.Res
 	return e.Execute(ctx, q)
 }
 
+// prepareStatement 生成表数据浏览语句（支持 filter / sort），或原样返回自定义 SQL。
 func prepareStatement(q domain.Query) (string, error) {
-	if q.Language != "" && q.Language != domain.LangSQL {
-		return "", domain.NewError(domain.CodeUnsupported, "mysql.query",
-			"MySQL 模块只支持 SQL，收到 %q", q.Language)
-	}
-	stmt := strings.TrimSpace(q.Text)
-	if stmt == "" {
-		if q.Ref.Name == "" {
-			return "", domain.NewError(domain.CodeValidation, "mysql.query", "查询内容不能为空")
-		}
-		qualified, err := quoteQualified(q.Ref.Database, q.Ref.Name)
-		if err != nil {
-			return "", err
-		}
-		limit := q.MaxRows
-		if limit <= 0 {
-			limit = domain.DefaultMaxRows
-		}
-		return fmt.Sprintf("SELECT * FROM %s LIMIT %d", qualified, limit), nil
-	}
-	return stmt, nil
+	return sqlkit.BuildPreview(sqlkit.SelectDialect{
+		Quoter: sqlkit.MySQLQuoter,
+		Qualified: func(ref domain.ObjectRef) (string, error) {
+			return quoteQualified(ref.Database, ref.Name)
+		},
+		LimitSuffix: func(limit int) string {
+			return fmt.Sprintf(" LIMIT %d", limit)
+		},
+	}, q)
 }

@@ -15,15 +15,16 @@ import (
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
 
-	core "github.com/dbclient/dbclient/internal/app"
-	"github.com/dbclient/dbclient/internal/domain"
-	"github.com/dbclient/dbclient/internal/platform/export"
+	core "github.com/db-fly/db-fly/internal/app"
+	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/db-fly/db-fly/internal/platform/export"
 )
 
 const (
 	labelSQL            = "SQL"
 	labelMongoFilter    = "Mongo 过滤"
 	labelMongoPipeline  = "Mongo 聚合"
+	labelRedis          = "Redis 命令"
 	defaultPreviewLimit = 100
 )
 
@@ -50,6 +51,8 @@ func languageLabel(lang string) string {
 		return labelMongoFilter
 	case domain.LangMongoPipeline:
 		return labelMongoPipeline
+	case domain.LangRedis:
+		return labelRedis
 	default:
 		return labelSQL
 	}
@@ -66,14 +69,15 @@ func stringIn(value string, options []string) bool {
 
 // resultGrid 是可复用的流式结果网格：每个结果集一个页签，文档型结果集另附 JSON 树页签。
 type resultGrid struct {
-	u         *ui
-	mu        sync.RWMutex
-	pages     []domain.ResultPage
-	tabs      *container.AppTabs
-	tableTabs []*container.TabItem
-	tables    []*widget.Table
-	active    int
-	status    *widget.Label
+	u           *ui
+	mu          sync.RWMutex
+	pages       []domain.ResultPage
+	tabs        *container.AppTabs
+	tableTabs   []*container.TabItem
+	tables      []*widget.Table
+	widthsSized []bool
+	active      int
+	status      *widget.Label
 
 	selected     widget.TableCellID
 	hasSelection bool
@@ -106,9 +110,9 @@ func (g *resultGrid) newTable(index int) *widget.Table {
 			page := g.pages[index]
 			return len(page.Rows) + 1, len(page.Columns)
 		},
-		func() fyne.CanvasObject { return widget.NewLabel("") },
+		func() fyne.CanvasObject { return newCellLabel() },
 		func(id widget.TableCellID, o fyne.CanvasObject) {
-			o.(*widget.Label).SetText(g.cell(index, id))
+			o.(*widget.Label).SetText(cellText(g.cell(index, id)))
 		},
 	)
 	table.OnSelected = func(id widget.TableCellID) {
@@ -152,6 +156,7 @@ func (g *resultGrid) reset() {
 	g.active = 0
 	g.tableTabs = nil
 	g.tables = nil
+	g.widthsSized = nil
 	g.tabs.SetItems([]*container.TabItem{
 		container.NewTabItem("结果", widget.NewLabel("执行查询后在此显示结果")),
 	})
@@ -178,6 +183,15 @@ func (g *resultGrid) startPage(index int, cols []domain.Column) {
 			g.tabs.Append(tab)
 		}
 	}
+	headers := make([]string, len(cols))
+	for i, col := range cols {
+		headers[i] = col.Name
+	}
+	sizeTableColumns(g.tables[index], headers, nil)
+	for len(g.widthsSized) <= index {
+		g.widthsSized = append(g.widthsSized, false)
+	}
+	g.widthsSized[index] = false
 	g.tables[index].Refresh()
 }
 
@@ -189,8 +203,37 @@ func (g *resultGrid) appendRows(index int, rows []domain.Row) {
 	g.pages[index].Rows = append(g.pages[index].Rows, rows...)
 	g.mu.Unlock()
 	if index < len(g.tables) {
+		if index < len(g.widthsSized) && !g.widthsSized[index] && len(rows) > 0 {
+			g.sizeColumnsToRows(index, rows)
+			g.widthsSized[index] = true
+		}
 		g.tables[index].Refresh()
 	}
+}
+
+// sizeColumnsToRows 用第一批数据样本调整列宽，之后不再变动，避免列宽抖动。
+func (g *resultGrid) sizeColumnsToRows(index int, rows []domain.Row) {
+	g.mu.RLock()
+	headers := make([]string, 0)
+	if index < len(g.pages) {
+		for _, col := range g.pages[index].Columns {
+			headers = append(headers, col.Name)
+		}
+	}
+	g.mu.RUnlock()
+
+	sample := make([][]string, 0, maxSampleRows)
+	for _, row := range rows {
+		if len(sample) >= maxSampleRows {
+			break
+		}
+		line := make([]string, len(row))
+		for i, cell := range row {
+			line[i] = cellText(cell.Display())
+		}
+		sample = append(sample, line)
+	}
+	sizeTableColumns(g.tables[index], headers, sample)
 }
 
 func (g *resultGrid) finish(outcome domain.QueryOutcome) {
@@ -354,6 +397,9 @@ func (v *queryView) applyCapabilities(conn string) {
 	if v.caps.Has(domain.CapMongoFilter) {
 		options = append(options, labelMongoFilter, labelMongoPipeline)
 	}
+	if v.caps.Has(domain.CapKeyValues) {
+		options = append(options, labelRedis)
+	}
 	if len(options) == 0 {
 		options = []string{labelSQL}
 	}
@@ -373,12 +419,18 @@ func (v *queryView) applyCapabilities(conn string) {
 	} else {
 		v.collection.Disable()
 	}
-	if !v.caps.Has(domain.CapSQL) {
+	switch {
+	case v.caps.Has(domain.CapKeyValues):
+		v.editor.SetPlaceHolder("输入 Redis 命令（例如 SCAN 0 MATCH user:* COUNT 100）")
+		if strings.TrimSpace(v.editor.Text) == "SELECT VERSION();" {
+			v.editor.SetText("PING")
+		}
+	case !v.caps.Has(domain.CapSQL):
 		v.editor.SetPlaceHolder("输入 MongoDB filter / pipeline JSON（例如 {\"status\":\"A\"}）")
 		if strings.TrimSpace(v.editor.Text) == "SELECT VERSION();" {
 			v.editor.SetText("{}")
 		}
-	} else {
+	default:
 		v.editor.SetPlaceHolder("输入 SQL 或 MongoDB filter/pipeline JSON；可选中部分文本执行")
 	}
 }
@@ -408,6 +460,8 @@ func (v *queryView) currentLanguage() domain.QueryLanguage {
 		return domain.LangMongoFilter
 	case labelMongoPipeline:
 		return domain.LangMongoPipeline
+	case labelRedis:
+		return domain.LangRedis
 	default:
 		return domain.LangSQL
 	}
@@ -517,14 +571,19 @@ func (v *queryView) reportError(err error) {
 }
 
 type dataView struct {
-	u         *ui
-	grid      *resultGrid
-	info      *widget.Label
-	editBtn   *widget.Button
-	importBtn *widget.Button
-	conn      string
-	database  string
-	table     string
+	u           *ui
+	grid        *resultGrid
+	info        *widget.Label
+	filter      *widget.Entry
+	sort        *widget.Entry
+	editBtn     *widget.Button
+	importBtn   *widget.Button
+	truncateBtn *widget.Button
+	emptyBtn    *widget.Button
+	conn        string
+	database    string
+	table       string
+	caps        domain.CapabilitySet
 }
 
 func newDataView(u *ui) *dataView { return &dataView{u: u} }
@@ -532,23 +591,77 @@ func newDataView(u *ui) *dataView { return &dataView{u: u} }
 func (v *dataView) build() fyne.CanvasObject {
 	v.grid = newResultGrid(v.u)
 	v.info = widget.NewLabel("请在左侧选择一张表")
+	v.filter = widget.NewEntry()
+	v.filter.SetPlaceHolder("过滤条件：WHERE 片段 / filter JSON / 键匹配模式")
+	v.sort = widget.NewEntry()
+	v.sort.SetPlaceHolder("排序条件：id DESC, name ASC / sort JSON")
 	v.editBtn = widget.NewButton("编辑选中行", func() {
 		showRowEditor(v.u, v.conn, v.database, v.table, v.grid, v.reload)
 	})
 	v.importBtn = widget.NewButton("导入文件", func() {
 		showImportDialog(v.u, v.conn, v.database, v.table, v.reload)
 	})
-	toolbar := container.NewHBox(
+	v.truncateBtn = widget.NewButton("TRUNCATE", func() {
+		v.showTableAction(domain.TableActionTruncate)
+	})
+	v.emptyBtn = widget.NewButton("清空数据(DELETE)", func() {
+		v.showTableAction(domain.TableActionEmpty)
+	})
+	actions := container.NewHBox(
 		widget.NewButton("刷新数据", v.reload),
-		v.editBtn,
-		v.importBtn,
+		widget.NewButton("应用条件", v.reload),
+		widget.NewButton("清除条件", func() {
+			v.filter.SetText("")
+			v.sort.SetText("")
+			v.reload()
+		}),
+		v.editBtn, v.importBtn, v.truncateBtn, v.emptyBtn,
 		widget.NewButton("导出 CSV", func() { exportPage(v.u, v.grid.currentPage()) }),
 	)
-	return container.NewBorder(toolbar, v.info, nil, nil, v.grid.build())
+	conditions := container.NewHBox(
+		widget.NewLabel("Filter"), v.filter,
+		widget.NewLabel("Sort"), v.sort,
+	)
+	return container.NewBorder(container.NewVBox(actions, conditions), v.info, nil, nil, v.grid.build())
 }
 
 func (v *dataView) load(conn, database, table string) {
 	v.conn, v.database, v.table = conn, database, table
+	v.filter.SetText("")
+	v.sort.SetText("")
+	v.caps = v.u.capsFor(conn)
+	hasFilter := v.caps.Has(domain.CapTableFilter) || v.caps.Has(domain.CapKeyValues)
+	if hasFilter {
+		v.filter.Enable()
+	} else {
+		v.filter.Disable()
+	}
+	if v.caps.Has(domain.CapTableFilter) {
+		v.sort.Enable()
+	} else {
+		v.sort.Disable()
+	}
+	switch {
+	case v.caps.Has(domain.CapMongoFilter):
+		v.filter.SetPlaceHolder("filter JSON，如 {\"age\":{\"$gt\":18}}")
+		v.sort.SetPlaceHolder("sort JSON，如 {\"age\":-1}")
+	case v.caps.Has(domain.CapKeyValues):
+		v.filter.SetPlaceHolder("键匹配模式，如 user:*（留空为 *）")
+		v.sort.SetPlaceHolder("Redis 不支持排序")
+	default:
+		v.filter.SetPlaceHolder("WHERE 片段，如 id > 10 AND status = 'A'")
+		v.sort.SetPlaceHolder("ORDER BY 片段，如 id DESC, name ASC")
+	}
+	if v.caps.Has(domain.CapTruncateTable) {
+		v.truncateBtn.Enable()
+	} else {
+		v.truncateBtn.Disable()
+	}
+	if v.caps.Has(domain.CapEmptyTable) {
+		v.emptyBtn.Enable()
+	} else {
+		v.emptyBtn.Disable()
+	}
 	v.reload()
 }
 
@@ -561,9 +674,12 @@ func (v *dataView) reload() {
 	q := domain.Query{
 		Ref:      domain.ObjectRef{Database: v.database, Name: v.table},
 		Database: v.database, MaxRows: defaultPreviewLimit,
+		Filter: strings.TrimSpace(v.filter.Text),
+		Sort:   strings.TrimSpace(v.sort.Text),
 	}
 	v.grid.reset()
-	v.info.SetText(fmt.Sprintf("%s · 最多 %d 行", v.database+"."+v.table, defaultPreviewLimit))
+	label := v.tableLabel(q)
+	v.info.SetText(label)
 	sink := &gridSink{grid: v.grid}
 	v.u.async(func() {
 		out, err := v.u.core.Execute(context.Background(), v.conn, q, sink)
@@ -572,10 +688,50 @@ func (v *dataView) reload() {
 			return
 		}
 		fyne.Do(func() {
-			v.info.SetText(fmt.Sprintf("%s · 最多 %d 行 · %d ms",
-				v.database+"."+v.table, defaultPreviewLimit, out.Summary.DurationMs))
+			v.info.SetText(fmt.Sprintf("%s · %d 行 · %d ms",
+				label, out.Summary.Rows, out.Summary.DurationMs))
 		})
 	})
+}
+
+func (v *dataView) tableLabel(q domain.Query) string {
+	label := fmt.Sprintf("%s · 最多 %d 行", v.database+"."+v.table, defaultPreviewLimit)
+	if q.Filter != "" {
+		label += " · filter=" + q.Filter
+	}
+	if q.Sort != "" {
+		label += " · sort=" + q.Sort
+	}
+	return label
+}
+
+// showTableAction 生成 TRUNCATE / DELETE FROM 脚本并交给统一确认对话框。
+func (v *dataView) showTableAction(action domain.TableAction) {
+	if v.table == "" || v.conn == "" {
+		v.u.showInfo("提示", "请先在左侧选择一张表")
+		return
+	}
+	title := "TRUNCATE TABLE"
+	message := "即将生成 TRUNCATE 脚本，该操作会清空整张表且不可回滚。是否继续？"
+	if action == domain.TableActionEmpty {
+		title = "清空表数据 (DELETE FROM)"
+		message = "即将生成 DELETE FROM 脚本，该操作会逐行删除全部数据且不可自动回滚。是否继续？"
+	}
+	dialog.ShowConfirm(title, message, func(ok bool) {
+		if !ok {
+			return
+		}
+		conn := v.conn
+		ref := domain.ObjectRef{Database: v.database, Name: v.table}
+		v.u.async(func() {
+			script, err := v.u.core.PreviewTableAction(context.Background(), conn, ref, action)
+			if err != nil {
+				v.u.showError(err)
+				return
+			}
+			fyne.Do(func() { v.u.showScriptDialog(title+" 预览", conn, script) })
+		})
+	}, v.u.win)
 }
 
 func exportPage(u *ui, page domain.ResultPage) {
@@ -585,7 +741,7 @@ func exportPage(u *ui, page domain.ResultPage) {
 	}
 	path := widget.NewEntry()
 	home, _ := os.UserHomeDir()
-	path.SetText(filepath.Join(home, "Downloads", "dbclient_result.csv"))
+	path.SetText(filepath.Join(home, "Downloads", "db-fly_result.csv"))
 	dialog.ShowForm("导出 CSV", "导出", "取消", []*widget.FormItem{
 		widget.NewFormItem("文件路径", path),
 	}, func(ok bool) {

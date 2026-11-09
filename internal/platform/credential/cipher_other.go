@@ -14,10 +14,13 @@ import (
 )
 
 // 非 Windows 平台使用主密码 + AES-GCM。
-// 主密码来自环境变量 DBCLIENT_MASTER_KEY；未设置时退化为机器本地派生值，
+// 主密码来自环境变量 DB_FLY_MASTER_KEY（兼容旧变量 DBCLIENT_MASTER_KEY）；未设置时退化为机器本地派生值，
 // 安全性较弱，CLI 会在启动时给出警告。生产环境建议显式设置该变量。
 
-const masterKeyEnv = "DBCLIENT_MASTER_KEY"
+const (
+	masterKeyEnv       = "DB_FLY_MASTER_KEY"
+	legacyMasterKeyEnv = "DBCLIENT_MASTER_KEY"
+)
 
 type aesCipher struct {
 	key [32]byte
@@ -42,6 +45,9 @@ func platformCipher(dir string) (Cipher, error) {
 
 	secret := os.Getenv(masterKeyEnv)
 	if secret == "" {
+		secret = os.Getenv(legacyMasterKeyEnv)
+	}
+	if secret == "" {
 		secret = localFallbackSecret()
 	}
 	return &aesCipher{key: deriveKey(secret, salt)}, nil
@@ -61,6 +67,7 @@ func deriveKey(secret string, salt []byte) [32]byte {
 func localFallbackSecret() string {
 	host, _ := os.Hostname()
 	home, _ := os.UserHomeDir()
+	// 兼容升级：本地派生种子保持旧值，改动会导致已有 secrets.json 无法解密。
 	return "dbclient-local|" + host + "|" + home + "|" + os.Getenv("USER") + os.Getenv("USERNAME")
 }
 

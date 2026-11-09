@@ -16,12 +16,12 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
-	core "github.com/dbclient/dbclient/internal/app"
-	"github.com/dbclient/dbclient/internal/domain"
-	"github.com/dbclient/dbclient/internal/platform/audit"
-	"github.com/dbclient/dbclient/internal/platform/config"
-	"github.com/dbclient/dbclient/internal/platform/credential"
-	_ "github.com/dbclient/dbclient/internal/provider/all"
+	core "github.com/db-fly/db-fly/internal/app"
+	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/db-fly/db-fly/internal/platform/audit"
+	"github.com/db-fly/db-fly/internal/platform/config"
+	"github.com/db-fly/db-fly/internal/platform/credential"
+	_ "github.com/db-fly/db-fly/internal/provider/all"
 )
 
 type ui struct {
@@ -67,7 +67,7 @@ func Run() error {
 	}
 	a := core.New(cfg, secrets, logger)
 
-	fapp := fyneapp.NewWithID("com.dbclient.desktop")
+	fapp := fyneapp.NewWithID("com.dbfly.desktop")
 	u := newUI(a, fapp)
 	if saved, err := cfg.Load(); err == nil {
 		u.dark = saved.Preferences.Theme == "dark"
@@ -75,7 +75,7 @@ func Run() error {
 			fapp.Settings().SetTheme(theme.DarkTheme())
 		}
 	}
-	u.win = fapp.NewWindow("DBClient")
+	u.win = fapp.NewWindow("db-fly")
 	u.win.SetContent(u.layout())
 	u.win.Resize(fyne.NewSize(1280, 820))
 	u.win.SetOnClosed(func() { _ = a.Close() })
