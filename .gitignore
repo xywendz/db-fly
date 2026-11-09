@@ -1,0 +1,11 @@
+dist/
+*.exe
+*.test
+*.out
+*.log
+.dbclient/
+
+# IDE 生成的 GOPATH 工具与模块缓存副本（非项目源码）
+bin/
+pkg/
+.vscode/
