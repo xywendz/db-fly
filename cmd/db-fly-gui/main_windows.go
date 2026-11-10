@@ -8,6 +8,8 @@ import (
 
 	"github.com/db-fly/db-fly/internal/domain"
 	"github.com/db-fly/db-fly/internal/gui"
+	// 注册按数据库类型拆分的 GUI 子包（relational / document / keyvalue）。
+	_ "github.com/db-fly/db-fly/internal/gui/all"
 )
 
 func main() {

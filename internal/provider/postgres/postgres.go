@@ -175,7 +175,10 @@ func (s *session) Query() domain.QueryExecutor {
 		Dialect: sqlkit.SelectDialect{
 			Quoter:    ansi,
 			Qualified: qualified,
-			LimitSuffix: func(limit int) string {
+			LimitSuffix: func(limit, offset int) string {
+				if offset > 0 {
+					return " LIMIT " + strconv.Itoa(limit) + " OFFSET " + strconv.Itoa(offset)
+				}
 				return " LIMIT " + strconv.Itoa(limit)
 			},
 		},

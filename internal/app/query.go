@@ -60,8 +60,11 @@ func (a *App) prepareQuery(ctx context.Context, conn string, q domain.Query) (do
 	}
 	// Filter 非空且未指定对象时是「全库扫描/键匹配」模式（如 Redis SCAN），
 	// 由模块自行决定是否支持；通用层只负责放行请求。
-	if q.Text == "" && q.Ref.Name == "" && strings.TrimSpace(q.Filter) == "" {
+	if q.Text == "" && q.Ref.Name == "" && strings.TrimSpace(q.Filter) == "" && len(q.Conditions) == 0 {
 		return nil, c, q, 0, domain.NewError(domain.CodeValidation, "query", "查询内容不能为空")
+	}
+	if q.Offset < 0 {
+		return nil, c, q, 0, domain.NewError(domain.CodeValidation, "query", "分页偏移不能为负数")
 	}
 	if q.Database == "" && q.Ref.Database != "" {
 		q.Database = q.Ref.Database

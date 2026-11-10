@@ -293,9 +293,11 @@ type DatabaseSpec struct {
 type SchemaChangeKind string
 
 const (
-	ChangeAddColumn      SchemaChangeKind = "add_column"
-	ChangeModifyColumn   SchemaChangeKind = "modify_column"
-	ChangeRenameColumn   SchemaChangeKind = "rename_column"
+	ChangeAddColumn    SchemaChangeKind = "add_column"
+	ChangeModifyColumn SchemaChangeKind = "modify_column"
+	ChangeRenameColumn SchemaChangeKind = "rename_column"
+	// ChangeRenameTable 重命名整张表，NewName 为新表名；必须单独提交，不与其他变更合并。
+	ChangeRenameTable    SchemaChangeKind = "rename_table"
 	ChangeDropColumn     SchemaChangeKind = "drop_column"
 	ChangeAddIndex       SchemaChangeKind = "add_index"
 	ChangeDropIndex      SchemaChangeKind = "drop_index"
@@ -309,6 +311,8 @@ type SchemaChange struct {
 
 	Column  ColumnSpec `json:"column,omitempty"`
 	OldName string     `json:"old_name,omitempty"`
+	// NewName 是 ChangeRenameTable 的目标名称（不含库名与 schema）。
+	NewName string `json:"new_name,omitempty"`
 
 	Index     IndexSpec `json:"index,omitempty"`
 	IndexName string    `json:"index_name,omitempty"`
@@ -369,6 +373,21 @@ func (a TableAction) Valid() bool {
 	return a == TableActionTruncate || a == TableActionEmpty
 }
 
+// FilterCondition 是表数据浏览的结构化过滤条件，与 SQL 方言无关。
+// Join 表示与「上一条条件」的连接方式，仅允许 AND / OR，首条忽略。
+type FilterCondition struct {
+	Column   string `json:"column"`
+	Operator string `json:"operator"`
+	Value    string `json:"value,omitempty"`
+	Join     string `json:"join,omitempty"`
+}
+
+// SortTerm 是表数据浏览的结构化排序项。
+type SortTerm struct {
+	Column string `json:"column"`
+	Desc   bool   `json:"desc,omitempty"`
+}
+
 // Query 是一次查询请求。Collection 仅对 MongoDB 有意义。
 type Query struct {
 	Language QueryLanguage `json:"language"`
@@ -380,11 +399,17 @@ type Query struct {
 	// Filter / Sort 仅用于表数据浏览（Text 为空）时的条件附加：
 	// 关系型分别为 WHERE 与 ORDER BY 片段；MongoDB 为 filter 与 sort 的 Extended JSON；
 	// Redis 的 Filter 为 SCAN 的键匹配模式。各模块自行解释，不含方言的通用层只做透传。
-	Filter     string `json:"filter,omitempty"`
-	Sort       string `json:"sort,omitempty"`
-	MaxRows    int    `json:"max_rows,omitempty"`
-	TimeoutSec int    `json:"timeout_sec,omitempty"`
-	ReadOnly   bool   `json:"read_only,omitempty"`
+	Filter string `json:"filter,omitempty"`
+	Sort   string `json:"sort,omitempty"`
+	// Conditions / OrderTerms 是关系型表数据页的结构化条件，由 sqlkit 按方言生成
+	// 引用后的 WHERE / ORDER BY。与 Filter / Sort 互斥，优先级更高。
+	Conditions []FilterCondition `json:"conditions,omitempty"`
+	OrderTerms []SortTerm        `json:"order_terms,omitempty"`
+	// Offset 是分页偏移，由各模块生成方言分页子句。
+	Offset     int  `json:"offset,omitempty"`
+	MaxRows    int  `json:"max_rows,omitempty"`
+	TimeoutSec int  `json:"timeout_sec,omitempty"`
+	ReadOnly   bool `json:"read_only,omitempty"`
 }
 
 // ValueKind 描述结果单元格的展示类型。

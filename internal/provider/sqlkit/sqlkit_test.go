@@ -59,7 +59,7 @@ func TestBuildPreviewDialects(t *testing.T) {
 		Qualified: func(r domain.ObjectRef) (string, error) {
 			return MySQLQuoter.Qualified(r.Database, r.Name)
 		},
-		LimitSuffix: func(n int) string { return " LIMIT " + strconv.Itoa(n) },
+		LimitSuffix: func(n, offset int) string { return " LIMIT " + strconv.Itoa(n) },
 	}, base)
 	if err != nil {
 		t.Fatal(err)
@@ -73,7 +73,7 @@ func TestBuildPreviewDialects(t *testing.T) {
 		Qualified: func(r domain.ObjectRef) (string, error) {
 			return TSQLQuoter.Qualified("dbo", r.Name)
 		},
-		TopPrefix: func(n int) string { return "TOP " + strconv.Itoa(n) + " " },
+		TopPrefix: func(n, offset int) string { return "TOP " + strconv.Itoa(n) + " " },
 	}, base)
 	if err != nil {
 		t.Fatal(err)
@@ -87,13 +87,84 @@ func TestBuildPreviewDialects(t *testing.T) {
 		Qualified: func(r domain.ObjectRef) (string, error) {
 			return ANSIQuoter.Qualified(r.Database, r.Name)
 		},
-		LimitSuffix: func(n int) string { return " FETCH FIRST " + strconv.Itoa(n) + " ROWS ONLY" },
+		LimitSuffix: func(n, offset int) string { return " FETCH FIRST " + strconv.Itoa(n) + " ROWS ONLY" },
 	}, base)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.HasSuffix(oracle, "FETCH FIRST 25 ROWS ONLY") {
 		t.Fatalf("Oracle 预览语句错误: %s", oracle)
+	}
+}
+
+func TestBuildConditionsAndOrderTerms(t *testing.T) {
+	where, err := BuildConditions([]domain.FilterCondition{
+		{Column: "name", Operator: "LIKE", Value: "A'%"},
+		{Column: "age", Operator: ">", Value: "18", Join: "AND"},
+		{Column: "status", Operator: "IN", Value: "A, B", Join: "OR"},
+		{Column: "deleted_at", Operator: "IS NULL", Join: "AND"},
+	}, MySQLQuoter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "`name` LIKE 'A''%' AND `age` > '18' OR `status` IN ('A', 'B') AND `deleted_at` IS NULL"
+	if where != want {
+		t.Fatalf("结构化过滤条件错误:\n got: %s\nwant: %s", where, want)
+	}
+	order, err := BuildOrderTerms([]domain.SortTerm{
+		{Column: "id", Desc: true}, {Column: "name"},
+	}, MySQLQuoter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if order != "`id` DESC, `name` ASC" {
+		t.Fatalf("结构化排序错误: %s", order)
+	}
+	if _, err := BuildConditions([]domain.FilterCondition{
+		{Column: "id", Operator: "SLEEP(1)", Value: "1"},
+	}, MySQLQuoter); err == nil {
+		t.Fatal("非法操作符应被拒绝")
+	}
+}
+
+func TestBuildPreviewPaging(t *testing.T) {
+	ref := domain.ObjectRef{Database: "app", Name: "users"}
+	q := domain.Query{
+		Ref: ref, MaxRows: 50, Offset: 100,
+		Conditions: []domain.FilterCondition{{Column: "age", Operator: ">", Value: "18"}},
+		OrderTerms: []domain.SortTerm{{Column: "id", Desc: true}},
+	}
+	mysql, err := BuildPreview(SelectDialect{
+		Quoter: MySQLQuoter,
+		Qualified: func(r domain.ObjectRef) (string, error) {
+			return MySQLQuoter.Qualified(r.Database, r.Name)
+		},
+		LimitSuffix: func(n, offset int) string {
+			return " LIMIT " + strconv.Itoa(n) + " OFFSET " + strconv.Itoa(offset)
+		},
+	}, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "SELECT * FROM `app`.`users` WHERE `age` > '18' ORDER BY `id` DESC LIMIT 50 OFFSET 100"
+	if mysql != want {
+		t.Fatalf("分页语句错误:\n got: %s\nwant: %s", mysql, want)
+	}
+
+	tsql, err := BuildPreview(SelectDialect{
+		Quoter:      TSQLQuoter,
+		Qualified:   func(r domain.ObjectRef) (string, error) { return TSQLQuoter.Qualified(r.Name) },
+		TopPrefix:   func(n, offset int) string { return "" },
+		PageOrderBy: "(SELECT NULL)",
+		LimitSuffix: func(n, offset int) string {
+			return " OFFSET " + strconv.Itoa(offset) + " ROWS FETCH NEXT " + strconv.Itoa(n) + " ROWS ONLY"
+		},
+	}, domain.Query{Ref: ref, MaxRows: 20, Offset: 40})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(tsql, "ORDER BY (SELECT NULL) OFFSET 40 ROWS FETCH NEXT 20 ROWS ONLY") {
+		t.Fatalf("T-SQL 分页语句错误: %s", tsql)
 	}
 }
 

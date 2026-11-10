@@ -46,8 +46,19 @@ func (e *queryExecutor) Execute(ctx context.Context, q domain.Query) (domain.Res
 		Qualified: func(ref domain.ObjectRef) (string, error) {
 			return quoteQualified("", defaultSchema(ref.Schema), ref.Name)
 		},
-		TopPrefix: func(limit int) string {
+		TopPrefix: func(limit, offset int) string {
+			if offset > 0 {
+				return ""
+			}
 			return fmt.Sprintf("TOP %d ", limit)
+		},
+		// T-SQL 的 OFFSET 必须搭配 ORDER BY，且不能与 TOP 同用。
+		PageOrderBy: "(SELECT NULL)",
+		LimitSuffix: func(limit, offset int) string {
+			if offset > 0 {
+				return fmt.Sprintf(" OFFSET %d ROWS FETCH NEXT %d ROWS ONLY", offset, limit)
+			}
+			return ""
 		},
 	}, q)
 	if err != nil {

@@ -147,6 +147,9 @@ func (e *schemaEditor) AlterTableScript(ctx context.Context, ref domain.ObjectRe
 	if err := validateName(ref.Name, "集合名"); err != nil {
 		return domain.Script{}, err
 	}
+	if len(changes) == 1 && changes[0].Kind == domain.ChangeRenameTable {
+		return e.renameCollectionScript(ref, changes[0].NewName)
+	}
 	statements := make([]string, 0, len(changes))
 	rollbacks := make([]string, 0, len(changes))
 	var warnings []string
@@ -194,6 +197,10 @@ func (e *schemaEditor) AlterTableScript(ctx context.Context, ref domain.ObjectRe
 			}
 			warnings = append(warnings, "删除索引需人工恢复其定义。")
 
+		case domain.ChangeRenameTable:
+			return domain.Script{}, domain.NewError(domain.CodeValidation, "mongo.script",
+				"重命名集合必须单独提交，不能与其他集合变更合并")
+
 		default:
 			return domain.Script{}, domain.NewError(domain.CodeUnsupported, "mongo.script",
 				"MongoDB 不支持变更类型 %q", ch.Kind)
@@ -205,6 +212,31 @@ func (e *schemaEditor) AlterTableScript(ctx context.Context, ref domain.ObjectRe
 		statements = append(statements, stmt)
 	}
 	return commandScript(statements, rollbacks, warnings), nil
+}
+
+// renameCollectionScript 生成 renameCollection 命令与改回原名的回滚命令。
+func (e *schemaEditor) renameCollectionScript(ref domain.ObjectRef, newName string) (domain.Script, error) {
+	if err := validateName(newName, "新集合名"); err != nil {
+		return domain.Script{}, err
+	}
+	rename, err := encodeCommand(mongoCommand{
+		Action: "renameCollection", Database: ref.Database,
+		Collection: ref.Name, NewName: newName,
+	})
+	if err != nil {
+		return domain.Script{}, err
+	}
+	rollback, err := encodeCommand(mongoCommand{
+		Action: "renameCollection", Database: ref.Database,
+		Collection: newName, NewName: ref.Name,
+	})
+	if err != nil {
+		return domain.Script{}, err
+	}
+	return commandScript([]string{rename}, []string{rollback}, []string{
+		"renameCollection 需要 admin 数据库的权限，且目标集合不能已存在。",
+		"重命名集合不会自动更新应用代码中的集合名，请人工复核。",
+	}), nil
 }
 
 func (e *schemaEditor) DropObjectScript(ctx context.Context, ref domain.ObjectRef) (domain.Script, error) {
@@ -308,6 +340,19 @@ func (e *schemaEditor) runCommand(ctx context.Context, cmd mongoCommand) error {
 		return mapQueryError(db.Collection(cmd.Collection).Indexes().DropOne(ctx, cmd.IndexName))
 	case "dropCollection":
 		return mapQueryError(db.Collection(cmd.Collection).Drop(ctx))
+	case "renameCollection":
+		if err := validateName(cmd.Collection, "集合名"); err != nil {
+			return err
+		}
+		if err := validateName(cmd.NewName, "新集合名"); err != nil {
+			return err
+		}
+		command := bson.D{
+			{Key: "renameCollection", Value: cmd.Database + "." + cmd.Collection},
+			{Key: "to", Value: cmd.Database + "." + cmd.NewName},
+			{Key: "dropTarget", Value: false},
+		}
+		return mapQueryError(e.client.Database("admin").RunCommand(ctx, command).Err())
 	case "insertDocuments":
 		if len(cmd.Documents) == 0 {
 			return nil

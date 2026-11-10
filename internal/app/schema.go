@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"strings"
 
 	"github.com/db-fly/db-fly/internal/domain"
 	"github.com/db-fly/db-fly/internal/platform/audit"
@@ -42,6 +43,18 @@ func (a *App) PreviewAlterTable(ctx context.Context, conn string, ref domain.Obj
 		return domain.Script{}, err
 	}
 	return s.Schema().AlterTableScript(ctx, ref, changes)
+}
+
+// PreviewRenameTable 生成重命名表的方言脚本；与其他结构变更一样先预览再显式确认执行。
+func (a *App) PreviewRenameTable(ctx context.Context, conn string, ref domain.ObjectRef, newName string) (domain.Script, error) {
+	newName = strings.TrimSpace(newName)
+	if newName == "" || newName == ref.Name {
+		return domain.Script{}, domain.NewError(domain.CodeValidation, "rename_table",
+			"请填写与原名称不同的新表名")
+	}
+	return a.PreviewAlterTable(ctx, conn, ref, []domain.SchemaChange{
+		{Kind: domain.ChangeRenameTable, NewName: newName},
+	})
 }
 
 func (a *App) PreviewDropObject(ctx context.Context, conn string, ref domain.ObjectRef) (domain.Script, error) {

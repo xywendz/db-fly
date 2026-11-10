@@ -75,6 +75,9 @@ func (d *ddlDriver) CreateTable(def domain.TableDefinition) ([]string, error) {
 }
 
 func (d *ddlDriver) AlterTable(ref domain.ObjectRef, changes []domain.SchemaChange) ([]string, []string, []string, error) {
+	if len(changes) == 1 && changes[0].Kind == domain.ChangeRenameTable {
+		return d.renameTable(ref, changes[0].NewName)
+	}
 	qualifiedName, err := qualified(ref)
 	if err != nil {
 		return nil, nil, nil, err
@@ -161,6 +164,10 @@ func (d *ddlDriver) AlterTable(ref domain.ObjectRef, changes []domain.SchemaChan
 			statements = append(statements, "DROP INDEX IF EXISTS "+idx)
 			warnings = append(warnings, fmt.Sprintf("删除索引 %s 需人工恢复定义。", ch.IndexName))
 
+		case domain.ChangeRenameTable:
+			return nil, nil, nil, domain.NewError(domain.CodeValidation, "postgresql.script",
+				"重命名表必须单独提交，不能与其他结构变更合并")
+
 		case domain.ChangeTableOptions:
 			if ch.Comment != "" {
 				statements = append(statements, "COMMENT ON TABLE "+qualifiedName+" IS '"+
@@ -176,6 +183,31 @@ func (d *ddlDriver) AlterTable(ref domain.ObjectRef, changes []domain.SchemaChan
 		}
 	}
 	return statements, rollbacks, warnings, nil
+}
+
+// renameTable 生成 ALTER TABLE ... RENAME TO 语句与改回原名的回滚脚本。
+func (d *ddlDriver) renameTable(ref domain.ObjectRef, newName string) ([]string, []string, []string, error) {
+	source, err := qualified(ref)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	newIdent, err := ansi.Ident(newName)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	schema, oldName := splitRef(ref)
+	targetRef := domain.ObjectRef{Database: ref.Database, Schema: schema, Name: newName}
+	target, err := qualified(targetRef)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	oldIdent, err := ansi.Ident(oldName)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return []string{"ALTER TABLE " + source + " RENAME TO " + newIdent},
+		[]string{"ALTER TABLE " + target + " RENAME TO " + oldIdent},
+		[]string{"重命名表不会自动更新引用它的视图、函数与外键约束，请人工复核。"}, nil
 }
 
 func (d *ddlDriver) indexName(ref domain.ObjectRef, name string) (string, error) {

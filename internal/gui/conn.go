@@ -45,6 +45,7 @@ func (u *ui) refreshConnections() {
 		u.tree.Refresh()
 	}
 	u.query.refreshConnections(list)
+	u.applyWorkspace(u.currentConn)
 	u.setStatus("已加载 %d 个连接", len(nodes))
 }
 

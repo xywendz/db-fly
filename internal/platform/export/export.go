@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/db-fly/db-fly/internal/domain"
@@ -43,6 +44,45 @@ func JSON(w io.Writer, outcome domain.QueryOutcome) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(outcome)
+}
+
+// SQL 把单个结果页写成 INSERT 语句。quote 用于引用标识符（表名/列名），
+// 为空时用反引号；字符串字面量按标准 SQL 转义（单引号及其中的反斜杠）。
+// 生成的语句不携带库名前缀，导入时由目标连接当前库决定。
+func SQL(w io.Writer, table string, page domain.ResultPage, quote func(string) string) error {
+	if quote == nil {
+		quote = func(s string) string { return "`" + strings.ReplaceAll(s, "`", "``") + "`" }
+	}
+	if len(page.Rows) == 0 {
+		return nil
+	}
+	cols := make([]string, len(page.Columns))
+	for i, c := range page.Columns {
+		cols[i] = quote(c.Name)
+	}
+	colList := strings.Join(cols, ", ")
+	for _, row := range page.Rows {
+		vals := make([]string, len(row))
+		for i, cell := range row {
+			if cell.Null {
+				vals[i] = "NULL"
+			} else {
+				vals[i] = sqlStringLiteral(cell.Text)
+			}
+		}
+		if _, err := fmt.Fprintf(w, "INSERT INTO %s (%s) VALUES (%s);\n",
+			quote(table), colList, strings.Join(vals, ", ")); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// sqlStringLiteral 把字段值转成 SQL 字符串字面量：反斜杠与单引号各转义一次。
+func sqlStringLiteral(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "'", "''")
+	return "'" + s + "'"
 }
 
 // Table 输出对齐的文本表格，供 CLI 使用。

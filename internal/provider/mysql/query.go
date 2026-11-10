@@ -121,7 +121,10 @@ func prepareStatement(q domain.Query) (string, error) {
 		Qualified: func(ref domain.ObjectRef) (string, error) {
 			return quoteQualified(ref.Database, ref.Name)
 		},
-		LimitSuffix: func(limit int) string {
+		LimitSuffix: func(limit, offset int) string {
+			if offset > 0 {
+				return fmt.Sprintf(" LIMIT %d OFFSET %d", limit, offset)
+			}
 			return fmt.Sprintf(" LIMIT %d", limit)
 		},
 	}, q)

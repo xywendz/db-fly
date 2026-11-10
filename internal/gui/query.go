@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 
 	core "github.com/db-fly/db-fly/internal/app"
@@ -81,6 +83,21 @@ type resultGrid struct {
 
 	selected     widget.TableCellID
 	hasSelection bool
+	// onCellSelected 在单击数据单元格时通知使用方（表数据页据此定位记录）。
+	onCellSelected func(widget.TableCellID)
+
+	// 内联编辑：editableCell 模板在选中单元格内直接展开 Entry。
+	editable     bool
+	editing      bool
+	editingID    widget.TableCellID
+	editingIndex int
+	editingCell  *editableCell
+	showTypes    bool
+	onActivated  func(widget.TableCellID)
+	onCommitted  func(widget.TableCellID, string)
+	cellDisplay  func(widget.TableCellID) (string, bool)
+	editValue    func(widget.TableCellID) string
+	extraRows    func() int
 }
 
 func newResultGrid(u *ui) *resultGrid {
@@ -108,27 +125,59 @@ func (g *resultGrid) newTable(index int) *widget.Table {
 				return 0, 0
 			}
 			page := g.pages[index]
-			return len(page.Rows) + 1, len(page.Columns)
+			rows := len(page.Rows) + 1
+			if g.extraRows != nil {
+				rows += g.extraRows()
+			}
+			return rows, len(page.Columns)
 		},
-		func() fyne.CanvasObject { return newCellLabel() },
+		func() fyne.CanvasObject {
+			c := newEditableCell()
+			c.OnTap = func(id widget.TableCellID) { g.handleCellTap(index, id) }
+			c.OnSubmit = func(id widget.TableCellID, text string) {
+				if g.onCommitted != nil {
+					g.onCommitted(id, text)
+				}
+				g.finishCellEdit(false)
+			}
+			return c
+		},
 		func(id widget.TableCellID, o fyne.CanvasObject) {
-			o.(*widget.Label).SetText(cellText(g.cell(index, id)))
+			cell, ok := o.(*editableCell)
+			if !ok {
+				return
+			}
+			cell.ID = id
+			text := g.displayCell(index, id)
+			if g.editable && g.editing && index == g.editingIndex && g.editingID == id && id.Row > 0 {
+				initial := text
+				if g.editValue != nil {
+					initial = g.editValue(id)
+				}
+				cell.ShowEditor(initial)
+				g.editingCell = cell
+			} else {
+				cell.ShowLabel(text)
+			}
 		},
 	)
 	table.OnSelected = func(id widget.TableCellID) {
 		g.mu.Lock()
 		g.selected = id
-		g.hasSelection = true
+		g.hasSelection = id.Row > 0
 		g.mu.Unlock()
 	}
 	return table
 }
 
-func (g *resultGrid) build() fyne.CanvasObject {
-	return container.NewBorder(nil, g.status, nil, nil, g.tabs)
-}
-
-func (g *resultGrid) cell(index int, id widget.TableCellID) string {
+// displayCell 允许表数据页覆盖单元格显示（暂存值、新增行、删除标记），
+// 未覆盖时回落到结果集原始数据；表头可附加列类型，与 Navicat 风格一致。
+func (g *resultGrid) displayCell(index int, id widget.TableCellID) string {
+	if g.cellDisplay != nil {
+		if text, ok := g.cellDisplay(id); ok {
+			return text
+		}
+	}
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	if index >= len(g.pages) {
@@ -136,16 +185,95 @@ func (g *resultGrid) cell(index int, id widget.TableCellID) string {
 	}
 	page := g.pages[index]
 	if id.Row == 0 {
-		if id.Col < len(page.Columns) {
-			return page.Columns[id.Col].Name
+		if id.Col >= len(page.Columns) {
+			return ""
 		}
-		return ""
+		col := page.Columns[id.Col]
+		if g.showTypes && col.Type != "" {
+			return col.Name + "\n" + col.Type
+		}
+		return col.Name
 	}
 	row := id.Row - 1
 	if row >= len(page.Rows) || id.Col >= len(page.Rows[row]) {
 		return ""
 	}
-	return page.Rows[row][id.Col].Display()
+	return cellText(page.Rows[row][id.Col].Display())
+}
+
+// handleCellTap 由单元格模板接管单击：提交上一个编辑、同步选中行、激活内联编辑。
+func (g *resultGrid) handleCellTap(index int, id widget.TableCellID) {
+	if g.editable {
+		g.finishCellEdit(true)
+	}
+	if index < len(g.tables) {
+		g.tables[index].Select(id)
+		if !g.editable {
+			// 非编辑网格（SQL 查询页）沿用 Table 键盘导航所需的焦点。
+			if canvas := fyne.CurrentApp().Driver().CanvasForObject(g.tables[index]); canvas != nil {
+				canvas.Focus(g.tables[index])
+			}
+		}
+	}
+	g.mu.Lock()
+	g.selected = id
+	g.hasSelection = id.Row > 0
+	g.mu.Unlock()
+	if g.onCellSelected != nil {
+		g.onCellSelected(id)
+	}
+	if g.editable && id.Row > 0 && g.onActivated != nil {
+		g.onActivated(id)
+	}
+}
+
+func (g *resultGrid) startEditing(id widget.TableCellID) {
+	g.finishCellEdit(true)
+	if len(g.tables) == 0 || g.active >= len(g.tables) {
+		return
+	}
+	g.editing = true
+	g.editingIndex = g.active
+	g.editingID = id
+	g.editingCell = nil
+	g.tables[g.editingIndex].Refresh()
+	if g.editingCell != nil {
+		g.editingCell.Focus(fyne.CurrentApp().Driver().CanvasForObject(g.tables[g.editingIndex]))
+	}
+}
+
+// refresh 在行数变化（新增/删除待提交记录）后重建可见单元格。
+func (g *resultGrid) refresh() {
+	for _, table := range g.tables {
+		table.Refresh()
+	}
+}
+
+// finishCellEdit 结束内联编辑；commit=true 时把输入框内容交给使用方暂存。
+func (g *resultGrid) finishCellEdit(commit bool) {
+	if !g.editing {
+		return
+	}
+	id := g.editingID
+	index := g.editingIndex
+	value := ""
+	if g.editingCell != nil {
+		value = g.editingCell.Entry.Text
+	}
+	g.editing = false
+	g.editingCell = nil
+	if commit && g.onCommitted != nil {
+		g.onCommitted(id, value)
+	}
+	if index < len(g.tables) {
+		g.tables[index].Refresh()
+	}
+}
+
+func (g *resultGrid) cancelCellEdit() { g.finishCellEdit(false) }
+
+func (g *resultGrid) build() fyne.CanvasObject {
+	return container.NewBorder(nil, g.status, nil, nil, g.tabs)
 }
 
 func (g *resultGrid) reset() {
@@ -153,6 +281,8 @@ func (g *resultGrid) reset() {
 	g.pages = nil
 	g.hasSelection = false
 	g.mu.Unlock()
+	g.editing = false
+	g.editingCell = nil
 	g.active = 0
 	g.tableTabs = nil
 	g.tables = nil
@@ -314,20 +444,30 @@ func (s *gridSink) OnFinish(outcome domain.QueryOutcome) {
 type queryView struct {
 	u *ui
 
-	editor     *widget.Entry
-	conn       *widget.Select
-	dbEntry    *widget.Entry
-	collection *widget.Entry
-	language   *widget.Select
-	grid       *resultGrid
-	runBtn     *widget.Button
-	explainBtn *widget.Button
-	cancelBtn  *widget.Button
-	exportBtn  *widget.Button
-	favBtn     *widget.Button
-	libBtn     *widget.Button
-	cancel     context.CancelFunc
-	caps       domain.CapabilitySet
+	view        fyne.CanvasObject
+	editor      *widget.Entry
+	conn        *widget.Select
+	dbEntry     *widget.Entry
+	collection  *widget.Entry
+	language    *widget.Select
+	connLabel   *widget.Label
+	dbLabel     *widget.Label
+	langLabel   *widget.Label
+	collLabel   *widget.Label
+	grid        *resultGrid
+	runBtn      *widget.Button
+	explainBtn  *widget.Button
+	cancelBtn   *widget.Button
+	exportBtn   *widget.Button
+	favBtn      *widget.Button
+	libBtn      *widget.Button
+	formatBtn   *widget.Button
+	templateBtn *widget.Button
+	newQueryBtn *widget.Button
+	gutter      *widget.Label
+	cancel      context.CancelFunc
+	caps        domain.CapabilitySet
+	category    dbCategory
 }
 
 func newQueryView(u *ui) *queryView { return &queryView{u: u} }
@@ -347,16 +487,28 @@ func (v *queryView) build() fyne.CanvasObject {
 	v.language.SetSelected(labelSQL)
 	v.grid = newResultGrid(v.u)
 
-	v.runBtn = widget.NewButton("执行", func() { v.run(false) })
+	v.runBtn = widget.NewButton("▶ 执行", func() { v.run(false) })
+	v.runBtn.Importance = widget.HighImportance
 	v.explainBtn = widget.NewButton("执行计划", func() { v.run(true) })
-	v.cancelBtn = widget.NewButton("取消", v.cancelQuery)
+	v.cancelBtn = widget.NewButton("停止", v.cancelQuery)
 	v.cancelBtn.Disable()
 	v.exportBtn = widget.NewButton("导出 CSV", func() { exportPage(v.u, v.grid.currentPage()) })
-	v.favBtn = widget.NewButton("保存收藏", func() {
+	v.favBtn = widget.NewButton("保存", func() {
 		showSaveFavorite(v.u, v.conn.Selected, v.dbEntry.Text, v.collection.Text,
 			string(v.currentLanguage()), v.currentText())
 	})
-	v.libBtn = widget.NewButton("历史 / 收藏", func() {
+	v.formatBtn = widget.NewButton("格式化 SQL", func() {
+		v.editor.SetText(formatSQL(v.editor.Text))
+	})
+	v.templateBtn = widget.NewButton("查询模板", func() {
+		table := v.u.currentTable
+		if table == "" {
+			table = "<表名>"
+		}
+		v.editor.SetText("SELECT *\nFROM " + table + "\nLIMIT 100;")
+	})
+	v.newQueryBtn = widget.NewButton("+ 新查询", func() { v.u.openNewQuery() })
+	v.libBtn = widget.NewButton("代码片段", func() {
 		showQueryLibrary(v.u, func(pick queryPick) {
 			v.editor.SetText(pick.Text)
 			if pick.Connection != "" {
@@ -374,15 +526,99 @@ func (v *queryView) build() fyne.CanvasObject {
 		})
 	})
 
-	toolbar := container.NewVBox(
-		container.NewHBox(widget.NewLabel("连接"), v.conn, widget.NewLabel("数据库"), v.dbEntry,
-			widget.NewLabel("语言"), v.language, widget.NewLabel("集合"), v.collection),
-		container.NewHBox(v.runBtn, v.explainBtn, v.cancelBtn, v.exportBtn, v.favBtn, v.libBtn),
+	v.connLabel = widget.NewLabel("连接")
+	v.dbLabel = widget.NewLabel("数据库")
+	v.langLabel = widget.NewLabel("语言")
+	v.collLabel = widget.NewLabel("集合")
+
+	// 参考 Navicat 查询页：第一行文档工具，第二行连接 / 执行控制，编辑区带行号槽。
+	docBar := container.NewHBox(
+		v.favBtn, v.formatBtn, v.templateBtn, v.libBtn,
+		widget.NewSeparator(), v.exportBtn, v.newQueryBtn,
+		layout.NewSpacer(),
 	)
-	editorPane := container.NewBorder(toolbar, nil, nil, nil, v.editor)
+	runBar := container.NewHBox(
+		v.connLabel, v.conn, v.dbLabel, v.dbEntry,
+		v.langLabel, v.language, v.collLabel, v.collection,
+		widget.NewSeparator(), v.runBtn, v.cancelBtn, v.explainBtn,
+	)
+	v.gutter = widget.NewLabel("1")
+	v.gutter.Wrapping = fyne.TextWrapOff
+	v.editor.OnChanged = func(text string) { v.gutter.SetText(lineNumberGutter(text)) }
+	v.gutter.SetText(lineNumberGutter(v.editor.Text))
+
+	editorPane := container.NewBorder(
+		container.NewVBox(docBar, runBar, widget.NewSeparator()),
+		nil, container.NewVBox(v.gutter), nil, v.editor,
+	)
 	split := container.NewVSplit(editorPane, v.grid.build())
 	split.Offset = 0.42
-	return split
+	v.view = split
+	return v.view
+}
+
+// setCategory 按数据库类别裁剪查询页的功能：文档型显示集合与 filter/pipeline，
+// 键值型只保留原生命令，关系型显示 SQL 与执行计划。
+func (v *queryView) setCategory(cat dbCategory, caps domain.CapabilitySet) {
+	previous := v.category
+	v.category = cat
+	v.caps = caps
+	show := func(obj fyne.CanvasObject, visible bool) {
+		if visible {
+			obj.Show()
+		} else {
+			obj.Hide()
+		}
+	}
+	show(v.collLabel, cat == categoryDocument)
+	show(v.collection, cat == categoryDocument)
+	if !caps.Has(domain.CapExplain) {
+		v.explainBtn.Disable()
+	} else if !v.busy() {
+		v.explainBtn.Enable()
+	}
+	switch cat {
+	case categoryKeyValue:
+		v.dbLabel.SetText("逻辑库")
+		v.editor.SetPlaceHolder("输入 Redis 命令（例如 SCAN 0 MATCH user:* COUNT 100）")
+		v.dbEntry.SetPlaceHolder("逻辑库（如 db0），留空使用连接默认库")
+		v.exportBtn.SetText("导出结果")
+	case categoryDocument:
+		v.dbLabel.SetText("数据库")
+		v.editor.SetPlaceHolder("输入 MongoDB filter / pipeline JSON（例如 {\"status\":\"A\"}）")
+		v.dbEntry.SetPlaceHolder("数据库（可选）")
+		v.exportBtn.SetText("导出结果")
+	default:
+		v.dbLabel.SetText("数据库")
+		v.editor.SetPlaceHolder("输入 SQL，可选中部分文本执行")
+		v.dbEntry.SetPlaceHolder("当前数据库（可选）")
+		v.exportBtn.SetText("导出 CSV")
+	}
+	if previous != cat && isDefaultQueryText(v.editor.Text) {
+		v.editor.SetText(defaultQueryText(cat))
+	}
+}
+
+func (v *queryView) busy() bool { return v.cancelBtn != nil && !v.cancelBtn.Disabled() }
+
+func isDefaultQueryText(text string) bool {
+	switch strings.TrimSpace(text) {
+	case "SELECT VERSION();", "PING", "{}", "":
+		return true
+	default:
+		return false
+	}
+}
+
+func defaultQueryText(cat dbCategory) string {
+	switch cat {
+	case categoryKeyValue:
+		return "PING"
+	case categoryDocument:
+		return "{}"
+	default:
+		return "SELECT VERSION();"
+	}
 }
 
 func (v *queryView) applyCapabilities(conn string) {
@@ -433,6 +669,7 @@ func (v *queryView) applyCapabilities(conn string) {
 	default:
 		v.editor.SetPlaceHolder("输入 SQL 或 MongoDB filter/pipeline JSON；可选中部分文本执行")
 	}
+	v.setCategory(categoryOf(v.caps), v.caps)
 }
 
 func (v *queryView) refreshConnections(list []domain.ConnectionConfig) {
@@ -515,6 +752,36 @@ func currentStatement(e *widget.Entry) string {
 	return ""
 }
 
+var sqlClausePattern = regexp.MustCompile(
+	`(?i)\s+(FROM|WHERE|GROUP\s+BY|HAVING|ORDER\s+BY|LIMIT|UNION\s+ALL|UNION|LEFT\s+JOIN|INNER\s+JOIN|JOIN)\s+`)
+
+// formatSQL 只做可读的关键字换行，不改变语句语义；非 SQL 文本原样返回。
+func formatSQL(text string) string {
+	trimmed := strings.TrimSpace(text)
+	upper := strings.ToUpper(trimmed)
+	if !strings.HasPrefix(upper, "SELECT") &&
+		!strings.HasPrefix(upper, "WITH") &&
+		!strings.HasPrefix(upper, "SHOW") {
+		return text
+	}
+	return sqlClausePattern.ReplaceAllStringFunc(trimmed, func(match string) string {
+		keyword := strings.ToUpper(strings.Join(strings.Fields(match), " "))
+		return "\n" + keyword + "\n  "
+	})
+}
+
+func lineNumberGutter(text string) string {
+	lines := strings.Count(text, "\n") + 1
+	if lines > 2000 {
+		lines = 2000
+	}
+	var b strings.Builder
+	for i := 1; i <= lines; i++ {
+		fmt.Fprintf(&b, "%d\n", i)
+	}
+	return strings.TrimSuffix(b.String(), "\n")
+}
+
 func (v *queryView) run(explain bool) {
 	text := v.currentText()
 	if text == "" {
@@ -568,170 +835,6 @@ func (v *queryView) reportError(err error) {
 	v.u.setStatus("执行失败: %s", msg)
 	fyne.Do(func() { v.grid.status.SetText("执行失败: " + msg) })
 	v.u.showError(err)
-}
-
-type dataView struct {
-	u           *ui
-	grid        *resultGrid
-	info        *widget.Label
-	filter      *widget.Entry
-	sort        *widget.Entry
-	editBtn     *widget.Button
-	importBtn   *widget.Button
-	truncateBtn *widget.Button
-	emptyBtn    *widget.Button
-	conn        string
-	database    string
-	table       string
-	caps        domain.CapabilitySet
-}
-
-func newDataView(u *ui) *dataView { return &dataView{u: u} }
-
-func (v *dataView) build() fyne.CanvasObject {
-	v.grid = newResultGrid(v.u)
-	v.info = widget.NewLabel("请在左侧选择一张表")
-	v.filter = widget.NewEntry()
-	v.filter.SetPlaceHolder("过滤条件：WHERE 片段 / filter JSON / 键匹配模式")
-	v.sort = widget.NewEntry()
-	v.sort.SetPlaceHolder("排序条件：id DESC, name ASC / sort JSON")
-	v.editBtn = widget.NewButton("编辑选中行", func() {
-		showRowEditor(v.u, v.conn, v.database, v.table, v.grid, v.reload)
-	})
-	v.importBtn = widget.NewButton("导入文件", func() {
-		showImportDialog(v.u, v.conn, v.database, v.table, v.reload)
-	})
-	v.truncateBtn = widget.NewButton("TRUNCATE", func() {
-		v.showTableAction(domain.TableActionTruncate)
-	})
-	v.emptyBtn = widget.NewButton("清空数据(DELETE)", func() {
-		v.showTableAction(domain.TableActionEmpty)
-	})
-	actions := container.NewHBox(
-		widget.NewButton("刷新数据", v.reload),
-		widget.NewButton("应用条件", v.reload),
-		widget.NewButton("清除条件", func() {
-			v.filter.SetText("")
-			v.sort.SetText("")
-			v.reload()
-		}),
-		v.editBtn, v.importBtn, v.truncateBtn, v.emptyBtn,
-		widget.NewButton("导出 CSV", func() { exportPage(v.u, v.grid.currentPage()) }),
-	)
-	conditions := container.NewHBox(
-		widget.NewLabel("Filter"), v.filter,
-		widget.NewLabel("Sort"), v.sort,
-	)
-	return container.NewBorder(container.NewVBox(actions, conditions), v.info, nil, nil, v.grid.build())
-}
-
-func (v *dataView) load(conn, database, table string) {
-	v.conn, v.database, v.table = conn, database, table
-	v.filter.SetText("")
-	v.sort.SetText("")
-	v.caps = v.u.capsFor(conn)
-	hasFilter := v.caps.Has(domain.CapTableFilter) || v.caps.Has(domain.CapKeyValues)
-	if hasFilter {
-		v.filter.Enable()
-	} else {
-		v.filter.Disable()
-	}
-	if v.caps.Has(domain.CapTableFilter) {
-		v.sort.Enable()
-	} else {
-		v.sort.Disable()
-	}
-	switch {
-	case v.caps.Has(domain.CapMongoFilter):
-		v.filter.SetPlaceHolder("filter JSON，如 {\"age\":{\"$gt\":18}}")
-		v.sort.SetPlaceHolder("sort JSON，如 {\"age\":-1}")
-	case v.caps.Has(domain.CapKeyValues):
-		v.filter.SetPlaceHolder("键匹配模式，如 user:*（留空为 *）")
-		v.sort.SetPlaceHolder("Redis 不支持排序")
-	default:
-		v.filter.SetPlaceHolder("WHERE 片段，如 id > 10 AND status = 'A'")
-		v.sort.SetPlaceHolder("ORDER BY 片段，如 id DESC, name ASC")
-	}
-	if v.caps.Has(domain.CapTruncateTable) {
-		v.truncateBtn.Enable()
-	} else {
-		v.truncateBtn.Disable()
-	}
-	if v.caps.Has(domain.CapEmptyTable) {
-		v.emptyBtn.Enable()
-	} else {
-		v.emptyBtn.Disable()
-	}
-	v.reload()
-}
-
-// reload 使用 Query.Ref 让各数据库模块自行生成预览语句，GUI 不拼接任何方言。
-func (v *dataView) reload() {
-	if v.table == "" || v.conn == "" {
-		v.u.showInfo("提示", "请先在左侧选择一张表")
-		return
-	}
-	q := domain.Query{
-		Ref:      domain.ObjectRef{Database: v.database, Name: v.table},
-		Database: v.database, MaxRows: defaultPreviewLimit,
-		Filter: strings.TrimSpace(v.filter.Text),
-		Sort:   strings.TrimSpace(v.sort.Text),
-	}
-	v.grid.reset()
-	label := v.tableLabel(q)
-	v.info.SetText(label)
-	sink := &gridSink{grid: v.grid}
-	v.u.async(func() {
-		out, err := v.u.core.Execute(context.Background(), v.conn, q, sink)
-		if err != nil {
-			v.u.showError(err)
-			return
-		}
-		fyne.Do(func() {
-			v.info.SetText(fmt.Sprintf("%s · %d 行 · %d ms",
-				label, out.Summary.Rows, out.Summary.DurationMs))
-		})
-	})
-}
-
-func (v *dataView) tableLabel(q domain.Query) string {
-	label := fmt.Sprintf("%s · 最多 %d 行", v.database+"."+v.table, defaultPreviewLimit)
-	if q.Filter != "" {
-		label += " · filter=" + q.Filter
-	}
-	if q.Sort != "" {
-		label += " · sort=" + q.Sort
-	}
-	return label
-}
-
-// showTableAction 生成 TRUNCATE / DELETE FROM 脚本并交给统一确认对话框。
-func (v *dataView) showTableAction(action domain.TableAction) {
-	if v.table == "" || v.conn == "" {
-		v.u.showInfo("提示", "请先在左侧选择一张表")
-		return
-	}
-	title := "TRUNCATE TABLE"
-	message := "即将生成 TRUNCATE 脚本，该操作会清空整张表且不可回滚。是否继续？"
-	if action == domain.TableActionEmpty {
-		title = "清空表数据 (DELETE FROM)"
-		message = "即将生成 DELETE FROM 脚本，该操作会逐行删除全部数据且不可自动回滚。是否继续？"
-	}
-	dialog.ShowConfirm(title, message, func(ok bool) {
-		if !ok {
-			return
-		}
-		conn := v.conn
-		ref := domain.ObjectRef{Database: v.database, Name: v.table}
-		v.u.async(func() {
-			script, err := v.u.core.PreviewTableAction(context.Background(), conn, ref, action)
-			if err != nil {
-				v.u.showError(err)
-				return
-			}
-			fyne.Do(func() { v.u.showScriptDialog(title+" 预览", conn, script) })
-		})
-	}, v.u.win)
 }
 
 func exportPage(u *ui, page domain.ResultPage) {

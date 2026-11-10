@@ -137,6 +137,9 @@ func (e *schemaEditor) CreateTableScript(_ context.Context, def domain.TableDefi
 }
 
 func (e *schemaEditor) AlterTableScript(_ context.Context, ref domain.ObjectRef, changes []domain.SchemaChange) (domain.Script, error) {
+	if len(changes) == 1 && changes[0].Kind == domain.ChangeRenameTable {
+		return e.renameTableScript(ref, changes[0].NewName)
+	}
 	qualified, err := quoteQualified(ref.Database, ref.Name)
 	if err != nil {
 		return domain.Script{}, err
@@ -220,6 +223,10 @@ func (e *schemaEditor) AlterTableScript(_ context.Context, ref domain.ObjectRef,
 			}
 			clauses = append(clauses, parts...)
 
+		case domain.ChangeRenameTable:
+			return domain.Script{}, domain.NewError(domain.CodeValidation, "mysql.script",
+				"重命名表必须单独提交，不能与其他结构变更合并")
+
 		default:
 			return domain.Script{}, domain.NewError(domain.CodeUnsupported, "mysql.script",
 				"MySQL 不支持变更类型 %q", ch.Kind)
@@ -235,6 +242,25 @@ func (e *schemaEditor) AlterTableScript(_ context.Context, ref domain.ObjectRef,
 		Statements: []string{"ALTER TABLE " + qualified + "\n  " + strings.Join(clauses, ",\n  ")},
 		Rollback:   rollbacks,
 		Warnings:   warnings,
+	}, nil
+}
+
+// renameTableScript 生成 RENAME TABLE 语句与改回原名的回滚脚本。
+func (e *schemaEditor) renameTableScript(ref domain.ObjectRef, newName string) (domain.Script, error) {
+	source, err := quoteQualified(ref.Database, ref.Name)
+	if err != nil {
+		return domain.Script{}, err
+	}
+	target, err := quoteQualified(ref.Database, newName)
+	if err != nil {
+		return domain.Script{}, err
+	}
+	return domain.Script{
+		Statements: []string{"RENAME TABLE " + source + " TO " + target},
+		Rollback:   []string{"RENAME TABLE " + target + " TO " + source},
+		Warnings: []string{
+			"重命名表不会自动更新视图、存储过程、触发器与外键引用，请人工复核。",
+		},
 	}, nil
 }
 

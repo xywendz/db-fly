@@ -131,6 +131,9 @@ func (d *ddlDriver) createIndex(ref domain.ObjectRef, idx domain.IndexSpec) (str
 }
 
 func (d *ddlDriver) AlterTable(ref domain.ObjectRef, changes []domain.SchemaChange) ([]string, []string, []string, error) {
+	if len(changes) == 1 && changes[0].Kind == domain.ChangeRenameTable {
+		return d.renameTable(ref, changes[0].NewName)
+	}
 	qualifiedName, err := qualified(ref)
 	if err != nil {
 		return nil, nil, nil, err
@@ -198,6 +201,10 @@ func (d *ddlDriver) AlterTable(ref domain.ObjectRef, changes []domain.SchemaChan
 			statements = append(statements, "DROP INDEX IF EXISTS "+name)
 			warnings = append(warnings, fmt.Sprintf("删除索引 %s 需人工恢复定义。", ch.IndexName))
 
+		case domain.ChangeRenameTable:
+			return nil, nil, nil, domain.NewError(domain.CodeValidation, "sqlite.script",
+				"重命名表必须单独提交，不能与其他结构变更合并")
+
 		case domain.ChangeTableOptions:
 			warnings = append(warnings, "SQLite 不支持表级存储引擎/字符集/注释选项，已忽略。")
 
@@ -233,6 +240,29 @@ func (d *ddlDriver) ShowCreate(ctx context.Context, ref domain.ObjectRef) (strin
 }
 
 // Truncate SQLite 没有 TRUNCATE，用 DELETE + 重置 sqlite_sequence 达到等效效果。
+// renameTable 生成 ALTER TABLE ... RENAME TO 语句与改回原名的回滚脚本。
+func (d *ddlDriver) renameTable(ref domain.ObjectRef, newName string) ([]string, []string, []string, error) {
+	source, err := qualified(ref)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	newIdent, err := ansi.Ident(newName)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	target, err := qualified(domain.ObjectRef{Database: ref.Database, Name: newName})
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	oldIdent, err := ansi.Ident(ref.Name)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return []string{"ALTER TABLE " + source + " RENAME TO " + newIdent},
+		[]string{"ALTER TABLE " + target + " RENAME TO " + oldIdent},
+		[]string{"重命名表后请检查视图、触发器与索引定义，SQLite 不会自动迁移外部引用。"}, nil
+}
+
 func (d *ddlDriver) Truncate(qualifiedName string) []string {
 	return []string{
 		"DELETE FROM " + qualifiedName,

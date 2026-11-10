@@ -110,6 +110,9 @@ func (d *ddlDriver) indexName(ref domain.ObjectRef, name string) (string, error)
 }
 
 func (d *ddlDriver) AlterTable(ref domain.ObjectRef, changes []domain.SchemaChange) ([]string, []string, []string, error) {
+	if len(changes) == 1 && changes[0].Kind == domain.ChangeRenameTable {
+		return d.renameTable(ref, changes[0].NewName)
+	}
 	qualifiedName, err := qualified(ref)
 	if err != nil {
 		return nil, nil, nil, err
@@ -174,6 +177,10 @@ func (d *ddlDriver) AlterTable(ref domain.ObjectRef, changes []domain.SchemaChan
 			statements = append(statements, "DROP INDEX "+name)
 			warnings = append(warnings, fmt.Sprintf("删除索引 %s 需人工恢复定义。", ch.IndexName))
 
+		case domain.ChangeRenameTable:
+			return nil, nil, nil, domain.NewError(domain.CodeValidation, "oracle.script",
+				"重命名表必须单独提交，不能与其他结构变更合并")
+
 		case domain.ChangeTableOptions:
 			if ch.Comment != "" {
 				statements = append(statements, "COMMENT ON TABLE "+qualifiedName+" IS '"+
@@ -189,6 +196,24 @@ func (d *ddlDriver) AlterTable(ref domain.ObjectRef, changes []domain.SchemaChan
 		}
 	}
 	return statements, rollbacks, warnings, nil
+}
+
+// renameTable 使用 Oracle 的 RENAME 语句；该语句只作用于当前 schema 且不接受限定名。
+func (d *ddlDriver) renameTable(ref domain.ObjectRef, newName string) ([]string, []string, []string, error) {
+	old, err := ansi.Ident(ref.Name)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	next, err := ansi.Ident(newName)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return []string{"RENAME " + old + " TO " + next},
+		[]string{"RENAME " + next + " TO " + old},
+		[]string{
+			"RENAME 只支持当前用户 schema 下的表，跨 schema 请改用 CREATE TABLE AS SELECT + DROP。",
+			"重命名表不会自动更新视图、同义词、存储过程与外键引用，请人工复核。",
+		}, nil
 }
 
 func (d *ddlDriver) DropObject(ref domain.ObjectRef) ([]string, error) {

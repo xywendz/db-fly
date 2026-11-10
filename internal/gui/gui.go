@@ -6,6 +6,7 @@ package gui
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	"fyne.io/fyne/v2"
@@ -30,21 +31,34 @@ type ui struct {
 	fapp fyne.App
 
 	tree   *widget.Tree
-	tabs   *container.AppTabs
+	tabs   *tabManager
 	status *widget.Label
 
-	treeMu   sync.RWMutex
-	nodes    map[string]treeNode
-	children map[string][]string
+	treeMu     sync.RWMutex
+	nodes      map[string]treeNode
+	children   map[string][]string
+	treeFilter string
+	treeSearch *widget.Entry
 
 	currentConn  string
 	currentDB    string
 	currentTable string
 	dark         bool
 
-	query  *queryView
-	schema *schemaView
-	data   *dataView
+	category       dbCategory
+	categoryBar    *widget.Label
+	crumb          *widget.Label
+	connLabel      *widget.Label
+	workspaceReady bool
+	workspaceConn  string
+
+	// treeClick 处理树节点的右键与双击，状态在所有节点模板间共享。
+	treeClick treeClick
+
+	query   *queryView
+	schema  *schemaView
+	data    *dataView
+	keyView *keyDetailView
 }
 
 // Run 启动 Windows GUI。
@@ -94,6 +108,7 @@ func newUI(a *core.App, fapp fyne.App) *ui {
 	u.query = newQueryView(u)
 	u.schema = newSchemaView(u)
 	u.data = newDataView(u)
+	u.keyView = newKeyDetailView(u)
 	return u
 }
 
@@ -101,28 +116,84 @@ func (u *ui) layout() fyne.CanvasObject {
 	u.status = widget.NewLabel("就绪 · 数据目录 " + u.dataDir())
 	u.tree = u.buildTree()
 
+	// 四个「动作宿主」视图只构建一次：右键菜单中的脚本预览类动作复用它们，
+	// 真正的数据展示由 tabManager 为每张表 / 每个查询创建独立实例。
+	u.query.build()
+	u.schema.build()
+	u.data.build()
+	u.keyView.build()
+
+	u.treeSearch = widget.NewEntry()
+	u.treeSearch.SetPlaceHolder("筛选连接 / 数据库 / 对象")
+	u.treeSearch.OnChanged = func(text string) {
+		u.treeMu.Lock()
+		u.treeFilter = strings.TrimSpace(text)
+		u.treeMu.Unlock()
+		u.tree.Refresh()
+	}
 	left := container.NewBorder(
-		widget.NewLabel("连接 / 数据库 / 对象"), nil, nil, nil,
-		container.NewScroll(u.tree),
+		container.NewVBox(widget.NewLabel("导航"), u.treeSearch, widget.NewSeparator()),
+		nil, nil, nil, container.NewScroll(u.tree),
 	)
-	u.tabs = container.NewAppTabs(
-		container.NewTabItem("SQL 查询", u.query.build()),
-		container.NewTabItem("表结构", u.schema.build()),
-		container.NewTabItem("表数据", u.data.build()),
+
+	u.categoryBar = widget.NewLabel(categoryRelational.name())
+	u.crumb = widget.NewLabel("未选择对象")
+	u.connLabel = widget.NewLabel("连接: -")
+	u.tabs = newTabManager(u)
+	tabContent := u.tabs.build()
+	crumbBar := container.NewHBox(
+		widget.NewLabel("位置"), u.crumb, layout.NewSpacer(), u.categoryBar,
 	)
-	split := container.NewHSplit(left, u.tabs)
+	right := container.NewBorder(
+		container.NewVBox(crumbBar, widget.NewSeparator()), nil, nil, nil, tabContent,
+	)
+	split := container.NewHSplit(left, right)
 	split.Offset = 0.24
 
+	// 数据库级动作已下沉到数据库/连接节点右键菜单，主工具栏只保留全局动作。
 	toolbar := container.NewHBox(
 		widget.NewButton("连接管理", u.showConnections),
-		widget.NewButton("新建数据库", u.showCreateDatabase),
-		widget.NewButton("修改数据库", u.showAlterDatabase),
-		widget.NewButton("刷新", func() { u.refreshConnections() }),
+		widget.NewButton("刷新连接树", func() { u.refreshConnections() }),
+		widget.NewSeparator(),
+		widget.NewButton("+ 新建查询", u.openNewQuery),
+		widget.NewButton("导出向导", func() { u.openExportWizard(u.currentConn, u.currentDB, "") }),
+		widget.NewButton("导入文件", u.showImportFile),
+		widget.NewSeparator(),
+		u.connLabel,
 		layout.NewSpacer(),
 		widget.NewButton("切换主题", u.toggleTheme),
 	)
 	bottom := container.NewHBox(u.status)
 	return container.NewBorder(toolbar, bottom, nil, nil, split)
+}
+
+// updateBreadcrumb 在面包屑中展示当前连接 / 数据库 / 对象。
+func (u *ui) updateBreadcrumb() {
+	if u.crumb == nil {
+		return
+	}
+	parts := make([]string, 0, 3)
+	if u.currentConn != "" {
+		parts = append(parts, u.currentConn)
+	}
+	if u.currentDB != "" {
+		parts = append(parts, u.currentDB)
+	}
+	if u.currentTable != "" {
+		parts = append(parts, u.currentTable)
+	}
+	if len(parts) == 0 {
+		u.crumb.SetText("未选择对象")
+	} else {
+		u.crumb.SetText(strings.Join(parts, "  ›  "))
+	}
+	if u.connLabel != nil {
+		if u.currentConn == "" {
+			u.connLabel.SetText("连接: -")
+		} else {
+			u.connLabel.SetText("连接: " + u.currentConn)
+		}
+	}
 }
 
 func (u *ui) dataDir() string {
@@ -192,8 +263,15 @@ func (u *ui) childUIDs(uid string) []widget.TreeNodeID {
 	u.treeMu.RLock()
 	defer u.treeMu.RUnlock()
 	children := u.children[uid]
+	filter := strings.ToLower(u.treeFilter)
 	out := make([]widget.TreeNodeID, 0, len(children))
 	for _, c := range children {
+		if filter != "" {
+			n, ok := u.nodes[c]
+			if !ok || !strings.Contains(strings.ToLower(n.label), filter) {
+				continue
+			}
+		}
 		out = append(out, widget.TreeNodeID(c))
 	}
 	return out

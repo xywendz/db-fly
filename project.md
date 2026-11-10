@@ -65,12 +65,15 @@ db-fly 是一个**模块化、多数据库、跨平台**的数据库客户端：
 - MongoDB filter / aggregate pipeline、Extended JSON、集合限定、`explain`、原生数据库命令。
 - Redis 原生命令、SCAN 键浏览、string/hash/list/set/zset 值展开、逻辑库切换、只读连接拒绝写命令。
 - 表数据浏览支持 filter / sort：关系型为 `WHERE` / `ORDER BY` 片段，MongoDB 为 filter / sort 的 Extended JSON，Redis 的 filter 为键匹配模式。
+- 关系型 GUI 另提供结构化「过滤 / 排序」构建器：多条字段条件（含 AND/OR 连接词与操作符白名单）、多条升序/降序排序项，`Query.Conditions` / `Query.OrderTerms` 由 `sqlkit` 按方言引用标识符、转义字面量；`Query.Offset` 驱动五种方言的分页（MySQL/PG/SQLite `LIMIT n OFFSET m`、SQL Server `OFFSET m ROWS FETCH NEXT n ROWS ONLY`、Oracle 同 ANSI 分页）。
 - 结果集：多结果集页签、列式表格、JSON 文档树、行数上限与截断提示。
 - 输出：`table` / `json` / `csv`；CSV 支持多结果集分文件导出。
 
 **结构与脚本**
 - 建库 / 改库 / 建表 / 改表 / 删对象的结构化表单 → 方言脚本预览 → 确认执行。
 - 「查看建表 SQL」入口展示服务端原始 DDL、元数据反向渲染的 `CREATE TABLE`，或 Redis 等价创建命令；改表表单先展示生成的 ALTER SQL 再确认执行。
+- 新建表在**独立可关闭页签**中打开（不再是弹窗），使用与「表结构」页一致的表结构样式设计器：字段网格 + 逐行属性表单 + 索引页 + 表选项页，不再编辑 JSON；最终仍组装 `TableDefinition` 交给数据库模块生成方言脚本。
+- 重命名表 / 集合：`PreviewRenameTable` 由各模块生成方言脚本（MySQL `RENAME TABLE`、SQL Server `sp_rename`、PG/SQLite `ALTER TABLE ... RENAME TO`、Oracle `RENAME`、Mongo `renameCollection`），同样先预览再确认执行。
 - `Script.Format` 区分 `sql`、`mongo_command` 与 `redis_command`；后两者按命令逐条预览（无分号）。
 - 自定义脚本执行：SQL 按语句拆分；Mongo 支持命令数组、NDJSON、单个多行 JSON 对象；Redis 按行拆分命令。
 
@@ -80,6 +83,7 @@ db-fly 是一个**模块化、多数据库、跨平台**的数据库客户端：
 
 **数据编辑与导入**
 - 结果集单元格行编辑：更新 / 删除 / 复制插入；键列自动推断（主键 → 唯一索引 → `_id`），也允许手动指定。
+- 关系型表数据页支持**原单元格内联编辑**：`editableCell` 模板接管单元格单击，在网格内直接展开输入框（回车或切换单元格即暂存）；底部记录操作条提供 `+ 新增记录 / − 删除记录 / ✕ 取消编辑 / 提交 / 回退`，新增记录以空白虚拟行追加在网格末尾并同样逐格内联填写。提交时把「单元格修改 + 删除标记 + 新增行」合并为一次 `EditRequest`（先预览参数化语句再确认回写），回退丢弃全部未提交改动。
 - 回写由各模块生成参数化 SQL（MySQL `?`、SQL Server `@pN`）或 Mongo 文档命令；支持可选事务。
 - 文件导入：SQL 脚本、CSV、TSV、Excel（`.xlsx`/`.xlsm`）、JSON 数组、NDJSON；结构化文件统一转成 `EditInsert` 结构化变更，支持 `--dry-run`、分批、事务。
 
@@ -207,7 +211,9 @@ db-fly/
 │   │   ├── history.go              # 查询历史、收藏、偏好
 │   │   └── import.go               # SQL/CSV/TSV/XLSX/JSON 导入
 │   ├── cli/                        # Cobra 命令（10 个 .go）
-│   ├── gui/                        # Fyne 桌面（9 个 .go，windows && cgo）
+│   ├── gui/                        # Fyne 桌面：workspace 类别分派、多文档页签、业务视图
+│   │   ├── components/            # 与数据库业务无关的公共 UI 组件（网格/列解析/内联编辑/TabStrip）
+│   │   ├── workspace_*.go         # 关系型 / 文档型 / 键值型各自的布局与菜单实现
 │   ├── platform/
 │   │   ├── config/                 # config.json 读写、收藏与历史持久化
 │   │   ├── credential/             # DPAPI / AES-GCM 凭证库
@@ -240,9 +246,9 @@ db-fly/
 | `DataEditor` | 结果集数据回写 | `Preview`、`Apply` |
 | `TableMaintenance`（可选） | 清空表数据脚本 | `TableActionScript`；不支持的模块返回 `nil` |
 
-核心实体（`entity.go`）：`ConnectionConfig`、`Script`（含 `Database` 用于按库分池）、`Query`（含 `Filter` / `Sort`）、`ResultPage`、`QueryOutcome`、`EditRequest` / `RowEdit` / `EditResult`、`TableSchema` / `ColumnSpec` / `SchemaChange`、`TableAction` 等。
+核心实体（`entity.go`）：`ConnectionConfig`、`Script`（含 `Database` 用于按库分池）、`Query`（含 `Filter` / `Sort` / `Conditions` / `OrderTerms` / `Offset`）、`FilterCondition` / `SortTerm`、`ResultPage`、`QueryOutcome`、`EditRequest` / `RowEdit` / `EditResult`、`TableSchema` / `ColumnSpec` / `SchemaChange`、`TableAction` 等。
 
-`Query.Ref` 非空且 `Text` 为空时表示「预览该对象的数据」，由各 provider 自行生成方言语句（MySQL `LIMIT`、SQL Server `SELECT TOP`、Oracle `FETCH FIRST`、Mongo 空 filter），通用层不拼 SQL；`Filter` / `Sort` 的语义由模块自行解释。
+`Query.Ref` 非空且 `Text` 为空时表示「预览该对象的数据」，由各 provider 自行生成方言语句（MySQL `LIMIT`、SQL Server `SELECT TOP`、Oracle `FETCH FIRST`、Mongo 空 filter），通用层不拼 SQL；`Filter` / `Sort` 的语义由模块自行解释。`Conditions` / `OrderTerms` 是与方言无关的结构化条件，由 `sqlkit.BuildConditions` / `BuildOrderTerms` 生成安全的 WHERE / ORDER BY，优先级高于自由文本 `Filter` / `Sort`；`Offset` 与 `MaxRows` 组合生成方言分页。
 
 关系型模块共用 `internal/provider/sqlkit`（非数据库模块）：标识符引用、片段安全校验、通用流式/内存结果集、filter/sort 解析、参数化数据编辑、DDL 脚本装配与 `ScriptRunner`；PostgreSQL 通过 `PoolSet` 按库懒建连接池。
 
@@ -268,6 +274,14 @@ db-fly/
 - `app.ResultSink`：`OnResultStart(index, cols)` / `OnRows(index, rows)` / `OnFinish(outcome)`；CLI 用 `CollectSink` 累积，GUI 用 `gridSink` 经 `fyne.Do` 切回 UI 线程分批刷新。
 - `consumeResult` 循环 `NextResultSet()` 生成多个 `ResultPage`，每批 200 行推送，施加 `MaxRows` 并标记 `Truncated`；同时收集 `ResultSet.Document()` 为 `JSONDocuments`。
 - GUI `resultGrid` 为每个结果集生成一个 `container.AppTabs` 页签，含 BSON 文档的结果集额外生成 `widget.Tree` JSON 树页签。
+- GUI 采用**类似 provider 的分层**：`internal/gui/components` 放与数据库业务无关的公共组件（单元格/列宽与类型解析/内联编辑单元/多文档 `TabStrip`）；`workspace` 接口 + `workspaces` 注册表按 `CapabilitySet` 推导的类别分派，三个实现分别在 `workspace_relational.go` / `workspace_document.go` / `workspace_keyvalue.go`，各自负责表页签内部布局（`TableParts`）、查询页签标题、对象/库/连接右键菜单、单击/双击与新建对象行为。主壳不做 `Kind` 分支。
+- GUI 是**多文档工作区**：每张表、每个查询、每个新建表设计器各占一个可关闭页签（`TabStrip` 支持 ID 去重、激活与关闭）；切换页签同步面包屑与类别。左侧树**单击只选中节点**（更新面包屑/右键动作目标），**双击为该表打开独立页签**，`conn+db+table` 相同则只激活不重复创建；右键菜单由对应类别的 workspace 生成（关系型含打开表数据、修改表名、导出数据、TRUNCATE、清空数据、修改表结构、删除表）。
+- 查询页签参考 Navicat 查询编辑器：第一行文档工具（保存 / 格式化 SQL / 查询模板 / 代码片段 / 导出 / 新查询），第二行连接 / 数据库 / 语言 / 集合 + `▶ 执行 / 停止 / 执行计划`，编辑区带行号槽，下方为多结果集网格。表页签顶部为对象信息与刷新工具，内部由 workspace 决定子页签（关系型/文档型为「数据 + 结构」，键值型为「键浏览」）。
+- 全局外壳：精简主工具栏（只保留连接管理 / 刷新 / 主题）、左侧导航树带节点过滤搜索、右上方「连接 › 库 › 表」面包屑与数据库类别标识、底部状态栏。数据库级功能（新建库、修改库、新建表/集合/键、刷新、查看库结构）全部下沉到数据库节点右键；新建数据库同时出现在连接节点右键。
+- 表结构页（Navicat 风格）：顶部两行工具条（对象级 + 随页签切换的上下文动作组）→ 概要行 → 页签条「字段 / 索引 / 外键 / 表选项 / 注释 / SQL 预览」→ 可拖动上下分割的字段网格与底部「字段属性」面板。字段网格按 `字段 / 类型 / 长度 / 小数位 / 非空 / 虚拟 / 键 / 注释` 八列展示（窄列固定列宽），`长度 / 小数位 / 无符号 / 补零` 由 `RawType` 派生纯展示；底部面板还原 Default / Auto Increment / Unsigned / Zerofill / 虚拟列 / 主键等只读控件。上下文按钮提供「添加字段 / 插入字段 / 修改字段类型 / 修改字段名称 / 删除字段」与「新增索引 / 删除索引」，每次生成单独一条 `SchemaChange`；另有表选项、重命名表、查看建表 SQL、新建表、删除表与「高级批量修改」，全部走脚本预览确认。网格与属性面板保持只读——项目所有 DDL 必须经过「结构化变更 → 脚本预览 → 确认执行」，不提供直接改网格后 Save 的路径。
+- 表数据页（参考 Navicat / DBeaver）：顶部操作条含常驻的「过滤 & 排序」折叠开关 → 可折叠条件卡片（过滤多行字段条件 + AND/OR、排序多行字段 + 升序/降序、实时条件预览）→ 列头带类型的数据网格（支持内联编辑与新增虚拟行）→ 底部记录操作条、分页条（`|< ◀ 第 N 页 ▶`）、等价 `SELECT ... LIMIT offset,size` 条件描述与 `Record x of N` 计数。折叠开关位于主工具条而非卡片内部，收起后仍可再次展开。文档型 / 键值型仍使用各自的条件输入，不显示结构化构建器与内联编辑。
+- **导出向导**（独立页签，来自主工具栏「导出向导」或对象/库右键「导出数据（向导）」「导出数据库（向导）」）：按步骤顺序执行 ① 选连接/数据库 → ② 选对象（整库或单表）→ ③ 选格式（SQL / CSV）→ ④ 选存储路径（单表保存为文件，整库保存为目录并按表分文件）→ ⑤ 执行导出。SQL 格式调用 `internal/platform/export.SQL` 生成 `INSERT` 语句，标识符引用按数据库类型（PostgreSQL 双引号 / SQL Server 方括号 / 其他反引号）区分，字符串按标准 SQL 转义；CSV 格式调用 `internal/platform/export.CSV`。
+- **导入文件**（主工具栏「导入文件」）：打开 Windows 文件选择框选取 SQL 文件，先做 `core.ImportFile(DryRun=true)` 预览语句条数，确认后 `DryRun=false` 真正执行；SQL 文件自带库/表信息，不要求先选中具体表。
 
 ### 2.7 错误处理与审计
 
@@ -290,7 +304,7 @@ db-fly/
 
 | 文件 | 构建标签 | 作用 |
 | --- | --- | --- |
-| `internal/gui/*.go`（`stub.go` 除外） | `//go:build windows && cgo` | 真实 Fyne GUI |
+| `internal/gui/*.go`、`internal/gui/components/*.go`（`stub.go` 除外） | `//go:build windows && cgo` | 真实 Fyne GUI 与公共 UI 组件 |
 | `internal/gui/stub.go` | `//go:build !windows \|\| !cgo` | 无 GUI 环境下 `Run()` 返回提示错误 |
 | `cmd/db-fly-gui/main_windows.go` | `//go:build windows && cgo` | GUI 入口 |
 | `cmd/db-fly-gui/main_stub.go` | `//go:build !windows \|\| !cgo` | 占位入口（Windows 下弹窗提示需要 CGO/gcc） |

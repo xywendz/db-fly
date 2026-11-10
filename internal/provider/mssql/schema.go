@@ -139,6 +139,9 @@ func (e *schemaEditor) CreateTableScript(ctx context.Context, def domain.TableDe
 }
 
 func (e *schemaEditor) AlterTableScript(ctx context.Context, ref domain.ObjectRef, changes []domain.SchemaChange) (domain.Script, error) {
+	if len(changes) == 1 && changes[0].Kind == domain.ChangeRenameTable {
+		return e.renameTableScript(ref, changes[0].NewName)
+	}
 	schema := defaultSchema(ref.Schema)
 	qualified, err := quoteQualified("", schema, ref.Name)
 	if err != nil {
@@ -205,6 +208,10 @@ func (e *schemaEditor) AlterTableScript(ctx context.Context, ref domain.ObjectRe
 			statements = append(statements, "DROP INDEX "+name+" ON "+qualified)
 			warnings = append(warnings, fmt.Sprintf("删除索引 %s 需人工恢复定义。", ch.IndexName))
 
+		case domain.ChangeRenameTable:
+			return domain.Script{}, domain.NewError(domain.CodeValidation, "sqlserver.script",
+				"重命名表必须单独提交，不能与其他结构变更合并")
+
 		case domain.ChangeTableOptions:
 			if ch.Comment != "" {
 				name, err := quoteIdent(ref.Name)
@@ -234,6 +241,32 @@ func (e *schemaEditor) AlterTableScript(ctx context.Context, ref domain.ObjectRe
 		Statements: statements,
 		Rollback:   rollbacks,
 		Warnings:   warnings,
+	}, nil
+}
+
+// renameTableScript 通过 sp_rename 重命名表；sp_rename 的第一个参数是「schema.表名」字符串。
+func (e *schemaEditor) renameTableScript(ref domain.ObjectRef, newName string) (domain.Script, error) {
+	if _, err := quoteIdent(newName); err != nil {
+		return domain.Script{}, err
+	}
+	use, err := useStatement(ref.Database)
+	if err != nil {
+		return domain.Script{}, err
+	}
+	schema := defaultSchema(ref.Schema)
+	oldFull := schema + "." + ref.Name
+	newFull := schema + "." + newName
+	rename := func(from, to string) string {
+		return "EXEC sp_rename N'" + escapeLiteral(from) + "', N'" + escapeLiteral(to) + "', N'OBJECT'"
+	}
+	statements := append(append([]string{}, use...), rename(oldFull, newName))
+	return domain.Script{
+		Format:     "sql",
+		Statements: statements,
+		Rollback:   []string{rename(newFull, ref.Name)},
+		Warnings: []string{
+			"sp_rename 不会自动更新引用该表的视图、存储过程与脚本，请人工复核。",
+		},
 	}, nil
 }
 

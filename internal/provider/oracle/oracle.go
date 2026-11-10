@@ -126,7 +126,11 @@ func (s *session) Query() domain.QueryExecutor {
 				Quoter:    ansi,
 				Qualified: qualified,
 				// Oracle 12c+ 的 ANSI 分页语法；与 WHERE / ORDER BY 可组合。
-				LimitSuffix: func(limit int) string {
+				LimitSuffix: func(limit, offset int) string {
+					if offset > 0 {
+						return " OFFSET " + strconv.Itoa(offset) + " ROWS FETCH NEXT " +
+							strconv.Itoa(limit) + " ROWS ONLY"
+					}
 					return " FETCH FIRST " + strconv.Itoa(limit) + " ROWS ONLY"
 				},
 			},
