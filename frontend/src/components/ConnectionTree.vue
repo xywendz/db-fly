@@ -470,22 +470,9 @@ async function menuConn(e: MouseEvent, c: ConnectionConfig) {
     { separator: true },
   ];
   if (kind === "redis") {
-    items.push(
-      { label: "新建 key", icon: "key", action: () => store.openRedisKeyTab(c.name, db, "") },
-      { label: "新建数据库", icon: "database", action: () => promptRedisDb(c.name) },
-    );
-  } else if (kind === "mongodb") {
-    items.push({ label: "新建集合", icon: "layers", action: () => store.openMongoCollectionTab(c.name, db, "") });
+    items.push({ label: "新建数据库", icon: "database", action: () => promptRedisDb(c.name) });
   } else {
-    items.push(
-      { label: "新增数据库", icon: "database", action: () => createDatabase(c.name) },
-      {
-        label: "新建表",
-        icon: "table",
-        disabled: !store.hasCap(c.name, "create_table"),
-        action: () => store.openDesignerTab(c.name, db),
-      },
-    );
+    items.push({ label: kind === "mongodb" ? "新建数据库" : "新增数据库", icon: "database", action: () => createDatabase(c.name) });
   }
   items.push(
     { label: "导入数据", icon: "upload", action: () => store.openImportTab(c.name, db, "") },
@@ -598,14 +585,6 @@ function menuObj(e: MouseEvent, conn: string, db: string, o: ObjectInfo) {
     { label: "查看 / 修改结构", icon: "column", action: () => store.openStructureTab(conn, ref) },
     { label: "复制表结构", icon: "copy", disabled: !relational(connKind(conn)), action: () => copyTable(conn, db, o, false) },
     { label: "复制表结构和数据", icon: "copy", disabled: !relational(connKind(conn)), action: () => copyTable(conn, db, o, true) },
-    { separator: true },
-    { label: "新增数据库", icon: "database", action: () => createDatabase(conn) },
-    {
-      label: "新建表",
-      icon: "table",
-      disabled: !store.hasCap(conn, "create_table"),
-      action: () => store.openDesignerTab(conn, db),
-    },
     { separator: true },
     { label: "导入数据", icon: "upload", action: () => store.openImportTab(conn, db, o.name) },
     { label: "导出数据", icon: "download", action: () => store.openExportTab(conn, db, o.name) },
