@@ -40,6 +40,9 @@ const dbStructure = ref(true);
 const dbData = ref(true);
 const dbContent = ref("");
 
+// Redis 命令导出（按连接类型选语言）
+const redisContent = ref("");
+
 const isDatabase = computed(() => source.value === "database");
 const databases = computed(() => store.dbCache[connName.value] || []);
 const tables = computed(() =>
@@ -49,11 +52,29 @@ const page = computed(() => outcome.value?.pages[0] ?? null);
 const columns = computed(() => page.value?.columns ?? []);
 const rows = computed<Row[]>(() => page.value?.rows ?? []);
 const ext = computed(() => FORMATS.find((f) => f.value === format.value)?.ext ?? "txt");
+// MongoDB 没有 SQL 概念，导出格式不提供 SQL INSERT；其余格式（文档采样展开）依旧可用。
+const formats = computed(() => (kind.value === "mongodb" ? FORMATS.filter((f) => f.value !== "sql") : FORMATS));
 const baseName = computed(() => sqlTarget.value.trim() || tableName.value.trim() || "export");
 const fileName = computed(() => `${baseName.value}.${ext.value}`);
 const schemaFileName = computed(() => `${baseName.value}.schema.sql`);
-const canStructure = computed(() => source.value === "table" && !!tableName.value.trim());
+// 表结构（DDL）仅关系型有意义，文档/键值库没有 CREATE TABLE 概念。
+const canStructure = computed(() => isRelational.value && source.value === "table" && !!tableName.value.trim());
 const withStructure = computed(() => exportMode.value === "structure_data" && canStructure.value && !!ddl.value);
+
+// 连接类型感知：关系型 → sql；MongoDB → mongo_filter；Redis → 命令导出（单独路径）。
+const kind = computed(() => store.connections.find((c) => c.name === connName.value)?.kind ?? "");
+const isRelational = computed(() => kind.value !== "mongodb" && kind.value !== "redis");
+const redisMode = computed(() => kind.value === "redis" && !isDatabase.value);
+
+// 切换连接时，非关系型强制回到「表/集合/键」来源，并清空结果。
+watch(connName, () => {
+  if (!isRelational.value && source.value !== "table") source.value = "table";
+  // 非关系型没有 SQL 概念，若之前选中了 SQL 格式则回退到 CSV。
+  if (!isRelational.value && format.value === "sql") format.value = "csv";
+  dbContent.value = "";
+  outcome.value = null;
+  redisContent.value = "";
+}, { immediate: true });
 
 watch([source, exportMode, tableName], () => { ddl.value = ""; });
 watch(source, () => { dbContent.value = ""; });
@@ -61,6 +82,21 @@ watch(source, () => { dbContent.value = ""; });
 function textOf(cell: Cell | undefined): string {
   if (!cell || cell.null) return nullText.value;
   return cell.text ?? "";
+}
+
+// ---- Redis 命令导出辅助 ----
+function rowTexts(row: Cell[]): string[] {
+  return row.map((c) => c?.text ?? "");
+}
+function valOf(row: Cell[]): string {
+  const t = rowTexts(row);
+  return t.length > 1 ? t[1] : (t[0] ?? "");
+}
+function q(s: string): string {
+  return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+async function redisQuery(text: string): Promise<QueryOutcome> {
+  return api.executeQuery({ conn: connName.value, query: { language: "redis", text, database: dbName.value } });
 }
 
 async function loadDatabase() {
@@ -84,8 +120,84 @@ async function loadDatabase() {
   }
 }
 
+// 生成 Redis 键的原生命令（SET/HSET/RPUSH/SADD/ZADD + EXPIRE）。
+async function buildRedisKeyCommands(key: string): Promise<string[]> {
+  const typeRes = await redisQuery(`TYPE ${q(key)}`);
+  const typ = valOf(typeRes.pages[0]?.rows?.[0] ?? []) || "none";
+  const ttlRes = await redisQuery(`TTL ${q(key)}`);
+  const ttl = Number(valOf(ttlRes.pages[0]?.rows?.[0] ?? [])) || -1;
+  const cmds: string[] = [];
+  if (typ === "string") {
+    const r = await redisQuery(`GET ${q(key)}`);
+    cmds.push(`SET ${q(key)} ${q(valOf(r.pages[0]?.rows?.[0] ?? []))}`);
+  } else if (typ === "hash") {
+    const r = await redisQuery(`HGETALL ${q(key)}`);
+    const flat = (r.pages[0]?.rows ?? []).map(valOf);
+    const parts: string[] = [];
+    for (let i = 0; i + 1 < flat.length; i += 2) parts.push(`${q(flat[i])} ${q(flat[i + 1])}`);
+    if (parts.length) cmds.push(`HSET ${q(key)} ${parts.join(" ")}`);
+  } else if (typ === "list") {
+    const r = await redisQuery(`LRANGE ${q(key)} 0 -1`);
+    const items = (r.pages[0]?.rows ?? []).map(valOf);
+    if (items.length) cmds.push(`RPUSH ${q(key)} ${items.map(q).join(" ")}`);
+  } else if (typ === "set") {
+    const r = await redisQuery(`SMEMBERS ${q(key)}`);
+    const members = (r.pages[0]?.rows ?? []).map(valOf);
+    if (members.length) cmds.push(`SADD ${q(key)} ${members.map(q).join(" ")}`);
+  } else if (typ === "zset") {
+    const r = await redisQuery(`ZRANGE ${q(key)} 0 -1 WITHSCORES`);
+    const flat = (r.pages[0]?.rows ?? []).map(valOf);
+    const parts: string[] = [];
+    for (let i = 0; i + 1 < flat.length; i += 2) parts.push(`${q(flat[i + 1])} ${q(flat[i])}`); // score member
+    if (parts.length) cmds.push(`ZADD ${q(key)} ${parts.join(" ")}`);
+  } else {
+    cmds.push(`# 跳过键 ${q(key)}：暂不支持导出的类型 ${typ}`);
+  }
+  if (ttl >= 0) cmds.push(`EXPIRE ${q(key)} ${ttl}`);
+  return cmds;
+}
+
+async function loadRedisExport() {
+  error.value = "";
+  if (!connName.value) { error.value = "请选择连接"; return; }
+  if (!dbName.value.trim()) { error.value = "请选择或填写数据库"; return; }
+  busy.value = true;
+  outcome.value = null;
+  redisContent.value = "";
+  try {
+    const pattern = tableName.value.trim() || "*";
+    const browse = await api.executeQuery({
+      conn: connName.value,
+      query: { language: "redis", ref: { database: dbName.value, name: "" }, filter: pattern, max_rows: maxRows.value },
+    });
+    const keyRows = browse.pages[0]?.rows ?? [];
+    const cmds: string[] = [];
+    for (const r of keyRows) {
+      const key = r[0]?.text ?? "";
+      if (!key) continue;
+      try {
+        cmds.push(...(await buildRedisKeyCommands(key)));
+      } catch (e: any) {
+        cmds.push(`# 跳过键 ${q(key)}（读取失败：${e?.message ?? e}）`);
+      }
+    }
+    redisContent.value = cmds.join("\n");
+    store.setStatus(`已生成 ${cmds.length} 条 Redis 命令（${keyRows.length} 个键）`, "ok");
+  } catch (e: any) {
+    error.value = e?.message ?? String(e);
+    store.setStatus(`生成失败：${error.value}`, "error");
+  } finally {
+    busy.value = false;
+  }
+}
+
+function exportLanguage(): string {
+  return kind.value === "mongodb" ? "mongo_filter" : "sql";
+}
+
 async function load() {
   if (isDatabase.value) { await loadDatabase(); return; }
+  if (redisMode.value) { await loadRedisExport(); return; }
   error.value = "";
   if (!connName.value) { error.value = "请选择连接"; return; }
   if (source.value === "table" && !tableName.value.trim()) { error.value = "请选择或填写要导出的表"; return; }
@@ -96,12 +208,12 @@ async function load() {
     outcome.value = await api.executeQuery({
       conn: connName.value,
       query: source.value === "table"
-        ? { language: "sql", ref: { database: dbName.value, name: tableName.value.trim() }, max_rows: maxRows.value }
-        : { language: "sql", text: sql.value.trim(), database: dbName.value || undefined, max_rows: maxRows.value },
+        ? { language: exportLanguage(), ref: { database: dbName.value, name: tableName.value.trim() }, max_rows: maxRows.value }
+        : { language: exportLanguage(), text: sql.value.trim(), database: dbName.value || undefined, max_rows: maxRows.value },
     });
     if (!sqlTarget.value) sqlTarget.value = tableName.value.trim();
     ddl.value = "";
-    if (exportMode.value === "structure_data" && source.value === "table") {
+    if (exportMode.value === "structure_data" && source.value === "table" && isRelational.value) {
       try {
         ddl.value = await api.showCreateObject(connName.value, {
           database: dbName.value,
@@ -172,6 +284,7 @@ function buildContent(): string {
 /** SQL 格式把 CREATE TABLE 合并进同一个文件；其他格式单独产出 .schema.sql。 */
 function mainContent(): string {
   if (isDatabase.value) return dbContent.value;
+  if (redisMode.value) return redisContent.value;
   if (format.value === "sql" && withStructure.value) {
     return `-- 表结构：${tableName.value.trim()}\n${ddl.value.trim()}\n\n` + buildContent();
   }
@@ -200,6 +313,14 @@ async function download() {
     store.setStatus(`已导出数据库 ${dbName.value} → ${name}`, "ok");
     return;
   }
+  if (redisMode.value) {
+    if (!redisContent.value) { await loadRedisExport(); if (!redisContent.value) return; }
+    const name = `${dbName.value.trim() || "redis"}.redis`;
+    saveFile(redisContent.value, name);
+    const n = redisContent.value.split("\n").filter(Boolean).length;
+    store.setStatus(`已导出 ${n} 条 Redis 命令 → ${name}`, "ok");
+    return;
+  }
   if (!outcome.value) { await load(); if (!outcome.value) return; }
   const bom = format.value === "csv" || format.value === "tsv" ? "\uFEFF" : "";
   saveFile(bom + mainContent(), fileName.value);
@@ -224,6 +345,16 @@ async function copy() {
     }
     return;
   }
+  if (redisMode.value) {
+    if (!redisContent.value) { await loadRedisExport(); if (!redisContent.value) return; }
+    try {
+      await navigator.clipboard.writeText(redisContent.value);
+      store.notify("Redis 命令已复制到剪贴板", "ok", 1800);
+    } catch {
+      store.setStatus("剪贴板不可用", "warn");
+    }
+    return;
+  }
   if (!outcome.value) { await load(); if (!outcome.value) return; }
   try {
     await navigator.clipboard.writeText(mainContent());
@@ -243,6 +374,7 @@ async function copy() {
       <span v-if="dbName" class="badge">{{ dbName }}</span>
       <span class="grow"></span>
       <span v-if="!isDatabase && outcome" class="badge badge-ok">{{ rows.length }} 行 · {{ columns.length }} 列</span>
+      <span v-else-if="redisMode && redisContent" class="badge badge-ok">{{ redisContent.split('\n').filter(Boolean).length }} 条命令</span>
     </div>
 
     <div class="page-body scroll">
@@ -265,14 +397,30 @@ async function copy() {
             </div>
           </div>
           <div class="row" style="gap: 14px">
-            <label class="check-line"><input type="radio" value="table" v-model="source" /> 导出表数据</label>
-            <label class="check-line"><input type="radio" value="sql" v-model="source" /> 使用自定义 SQL</label>
-            <label class="check-line"><input type="radio" value="database" v-model="source" /> 整个数据库</label>
+            <template v-if="isRelational">
+              <label class="check-line"><input type="radio" value="table" v-model="source" /> 导出表数据</label>
+              <label class="check-line"><input type="radio" value="sql" v-model="source" /> 使用自定义 SQL</label>
+              <label class="check-line"><input type="radio" value="database" v-model="source" /> 整个数据库</label>
+            </template>
+            <template v-else-if="kind === 'mongodb'">
+              <label class="check-line"><input type="radio" value="table" v-model="source" /> 导出集合数据</label>
+              <span class="field-hint">MongoDB 集合以 JSON 文档形式导出（CSV / JSON / SQL 等格式基于采样字段展开，每行一个文档）。</span>
+            </template>
+            <template v-else-if="kind === 'redis'">
+              <label class="check-line"><input type="radio" value="table" v-model="source" /> 导出键（命令）</label>
+              <span class="field-hint">Redis 以可回放原生命令（SET / HSET / RPUSH / SADD / ZADD + EXPIRE）导出匹配键。</span>
+            </template>
           </div>
-          <div v-if="source === 'table'" class="field">
-            <label class="field-label">表名 *</label>
-            <input v-model="tableName" list="export-table" placeholder="选择或填写表名" />
-            <datalist id="export-table"><option v-for="t in tables" :key="t.name" :value="t.name"></option></datalist>
+          <div v-if="source === 'table' && !redisMode" class="field">
+            <label class="field-label">{{ isRelational ? '表名 *' : '集合名 *' }}</label>
+            <select v-model="tableName">
+              <option value="">{{ dbName ? `选择${isRelational ? '表' : '集合'}…` : '请先选择数据库' }}</option>
+              <option v-for="t in tables" :key="t.name" :value="t.name">{{ t.name }}</option>
+            </select>
+          </div>
+          <div v-else-if="source === 'table' && redisMode" class="field">
+            <label class="field-label">键模式 (SCAN MATCH)</label>
+            <input v-model="tableName" placeholder="* 匹配全部，如 user:*" />
           </div>
           <div v-else-if="source === 'sql'" class="field">
             <label class="field-label">SQL 语句 *</label>
@@ -296,41 +444,47 @@ async function copy() {
             <span class="field-hint">整库导出固定生成 SQL 脚本（包含所有表的建表语句与 INSERT）。每表最多取「每表最多行数」行。</span>
           </template>
           <template v-else>
-            <div class="row wrap" style="gap: 14px">
+            <div v-if="isRelational" class="row wrap" style="gap: 14px">
               <label class="check-line"><input type="radio" value="data" v-model="exportMode" /> 仅导出数据</label>
               <label class="check-line">
                 <input type="radio" value="structure_data" v-model="exportMode" :disabled="!canStructure" />
                 表结构 + 数据
               </label>
-              <span v-if="!canStructure" class="field-hint">只有「导出表数据」来源才能附带表结构。</span>
+              <span v-if="!canStructure" class="field-hint">只有关系型「导出表数据」来源才能附带表结构。</span>
+            </div>
+            <div v-else class="row wrap" style="gap: 14px">
+              <span class="field-hint">{{ kind === 'mongodb' ? 'MongoDB 集合以文档形式导出，仅包含数据。' : '该类型仅支持导出数据。' }}</span>
             </div>
             <span v-if="exportMode === 'structure_data'" class="field-hint">
               SQL 格式会把 CREATE TABLE 与 INSERT 合并为一个文件；其他格式会额外下载 {{ schemaFileName }}。
             </span>
-            <div class="row wrap" style="gap: 6px">
-              <button
-                v-for="f in FORMATS"
-                :key="f.value"
-                class="btn btn-sm"
-                :class="{ active: format === f.value }"
-                :title="f.hint"
-                @click="format = f.value"
-              >{{ f.label }}</button>
-            </div>
-            <span class="field-hint">{{ FORMATS.find((f) => f.value === format)?.hint }}</span>
-            <div class="form-grid three">
-              <div v-if="format === 'csv' || format === 'tsv'" class="field">
-                <label class="check-line"><input type="checkbox" v-model="includeHeader" /> 包含列名首行</label>
+            <template v-if="!redisMode">
+              <div class="row wrap" style="gap: 6px">
+                <button
+                  v-for="f in formats"
+                  :key="f.value"
+                  class="btn btn-sm"
+                  :class="{ active: format === f.value }"
+                  :title="f.hint"
+                  @click="format = f.value"
+                >{{ f.label }}</button>
               </div>
-              <div v-if="format !== 'sql'" class="field">
-                <label class="field-label">NULL 显示为</label>
-                <input v-model="nullText" placeholder="留空 = 空字符串" />
+              <span class="field-hint">{{ formats.find((f) => f.value === format)?.hint }}</span>
+              <div class="form-grid three">
+                <div v-if="format === 'csv' || format === 'tsv'" class="field">
+                  <label class="check-line"><input type="checkbox" v-model="includeHeader" /> 包含列名首行</label>
+                </div>
+                <div v-if="format !== 'sql'" class="field">
+                  <label class="field-label">NULL 显示为</label>
+                  <input v-model="nullText" placeholder="留空 = 空字符串" />
+                </div>
+                <div v-if="format === 'sql'" class="field">
+                  <label class="field-label">INSERT 目标表</label>
+                  <input v-model="sqlTarget" placeholder="与源表同名" />
+                </div>
               </div>
-              <div v-if="format === 'sql'" class="field">
-                <label class="field-label">INSERT 目标表</label>
-                <input v-model="sqlTarget" placeholder="与源表同名" />
-              </div>
-            </div>
+            </template>
+            <span v-else class="field-hint">导出为 Redis 命令脚本（.redis），每行一条命令，可直接在 redis-cli 中回放。</span>
           </template>
         </div>
       </div>
@@ -346,11 +500,18 @@ async function copy() {
         </div>
         <div class="card-body">
           <EmptyState
-            v-if="!isDatabase && !outcome"
+            v-if="!isDatabase && !redisMode && !outcome"
             :compact="true"
             icon="table"
             title="尚未读取数据"
             description="设置数据来源后点击「读取数据」，确认内容无误再导出。"
+          />
+          <EmptyState
+            v-else-if="redisMode && !redisContent"
+            :compact="true"
+            icon="key"
+            title="尚未生成命令"
+            description="设置键模式后点击「读取数据」，将生成可回放的 Redis 命令脚本。"
           />
           <EmptyState
             v-else-if="isDatabase && !dbContent"
@@ -361,6 +522,9 @@ async function copy() {
           />
           <div v-else-if="isDatabase" class="scroll preview-scroll">
             <pre class="code">{{ dbContent }}</pre>
+          </div>
+          <div v-else-if="redisMode" class="scroll preview-scroll">
+            <pre class="code">{{ redisContent }}</pre>
           </div>
           <template v-else>
             <div class="scroll preview-scroll">
@@ -394,12 +558,13 @@ async function copy() {
     <div class="toolbar page-foot">
       <span class="faint" style="font-size: 11px">
         <template v-if="isDatabase">{{ dbName || "database" }}.sql</template>
+        <template v-else-if="redisMode">{{ dbName || "redis" }}.redis（Redis 命令）</template>
         <template v-else>
           {{ exportMode === "structure_data" ? "结构 + 数据" : "仅数据" }} · {{ fileName }}<span v-if="withStructure && format !== 'sql'"> + {{ schemaFileName }}</span>
         </template>
       </span>
       <span class="grow"></span>
-      <button class="btn" :disabled="(isDatabase ? !dbContent : !outcome) || busy" @click="copy"><Icon name="copy" :size="13" /> 复制内容</button>
+      <button class="btn" :disabled="(isDatabase ? !dbContent : redisMode ? !redisContent : !outcome) || busy" @click="copy"><Icon name="copy" :size="13" /> 复制内容</button>
       <button class="btn btn-primary" :disabled="busy" @click="download"><Icon name="download" :size="13" /> 生成并下载</button>
     </div>
   </div>

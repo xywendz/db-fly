@@ -23,10 +23,6 @@ function newQuery() {
   if (store.connections.length) emit("new-query");
   else emit("new-connection");
 }
-function newTable() {
-  if (store.connections.length) emit("new-table");
-  else emit("new-connection");
-}
 </script>
 
 <template>
@@ -40,9 +36,6 @@ function newTable() {
     </button>
     <button class="btn" title="新建查询 (Alt+N)" @click="newQuery">
       <Icon name="terminal" :size="14" /> 查询
-    </button>
-    <button class="btn" title="新建表" :disabled="!store.connections.length" @click="newTable">
-      <Icon name="table" :size="14" /> 建表
     </button>
     <button class="btn" title="导入文件" :disabled="!store.connections.length" @click="emit('import')">
       <Icon name="upload" :size="14" /> 导入

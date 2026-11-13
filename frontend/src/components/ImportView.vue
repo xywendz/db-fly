@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useWorkspace, type Tab } from "@/stores/workspace";
 import * as api from "@/api/client";
 import type { ImportOutcomeDTO } from "@/types/domain";
@@ -27,6 +27,12 @@ const path = ref("");
 const pickedName = ref("");
 const format = ref(props.tab.format || "csv");
 const sheet = ref("");
+// 连接类型感知：关系型支持全部格式；MongoDB 没有 SQL 概念，导入不提供 SQL 脚本。
+const kind = computed(() => store.connections.find((c) => c.name === connName.value)?.kind ?? "");
+const isRelational = computed(() => kind.value !== "mongodb" && kind.value !== "redis");
+const importFormats = computed(() => (isRelational.value ? FORMATS : FORMATS.filter((f) => f.value !== "sql")));
+// 切换到非关系型连接时，若之前选了 SQL 格式则回退到 CSV，避免无效选择。
+watch(connName, () => { if (!isRelational.value && format.value === "sql") format.value = "csv"; });
 const hasHeader = ref(true);
 const batchSize = ref(500);
 const transaction = ref(true);
@@ -83,9 +89,11 @@ function next() {
 function prev() { error.value = ""; step.value = Math.max(1, step.value - 1); }
 function goto(n: number) { if (n <= step.value) { step.value = n; error.value = ""; } }
 
-async function run() {
+// dry=true 进入「预览」模式（只生成预览，不写库）；dry=false 执行「导入数据」（真实写入）。
+async function run(dry: boolean) {
   error.value = "";
   if (!path.value.trim()) { error.value = "请填写要导入的文件完整路径"; step.value = 2; return; }
+  dryRun.value = dry;
   busy.value = true;
   result.value = null;
   step.value = 4;
@@ -99,9 +107,9 @@ async function run() {
       has_header: hasHeader.value,
       batch_size: batchSize.value,
       transaction: transaction.value,
-      dry_run: dryRun.value,
+      dry_run: dry,
     });
-    store.setStatus(dryRun.value ? "导入预览完成" : `导入完成 · ${result.value.applied} 行`, "ok");
+    store.setStatus(dry ? "导入预览完成" : `导入完成 · ${result.value.applied} 行`, "ok");
   } catch (e: any) {
     error.value = e?.message ?? String(e);
     store.setStatus(`导入失败：${error.value}`, "error");
@@ -157,7 +165,7 @@ function restart() {
             </div>
             <div class="field">
               <label class="field-label">文件格式</label>
-              <select v-model="format"><option v-for="f in FORMATS" :key="f.value" :value="f.value">{{ f.label }}</option></select>
+              <select v-model="format"><option v-for="f in importFormats" :key="f.value" :value="f.value">{{ f.label }}</option></select>
             </div>
             <div class="field">
               <label class="field-label">目标数据库<span v-if="format !== 'sql'" class="req"> *</span></label>
@@ -165,9 +173,11 @@ function restart() {
               <datalist id="import-db"><option v-for="d in databases" :key="d.name" :value="d.name"></option></datalist>
             </div>
             <div class="field">
-              <label class="field-label">目标表<span v-if="format !== 'sql'" class="req"> *</span></label>
-              <input v-model="tableName" list="import-table" placeholder="表名（SQL 可留空）" />
-              <datalist id="import-table"><option v-for="t in tables" :key="t.name" :value="t.name"></option></datalist>
+              <label class="field-label">{{ isRelational ? '目标表' : '目标集合' }}<span v-if="format !== 'sql'" class="req"> *</span></label>
+              <select v-model="tableName">
+                <option value="">{{ dbName ? `选择${isRelational ? '表' : '集合'}…` : '请先选择数据库' }}</option>
+                <option v-for="t in tables" :key="t.name" :value="t.name">{{ t.name }}</option>
+              </select>
             </div>
           </div>
         </div>
@@ -221,13 +231,8 @@ function restart() {
             <div class="col span-2" style="gap: 8px">
               <label v-if="needHeader" class="check-line"><input type="checkbox" v-model="hasHeader" /> 首行为表头（列名）</label>
               <label class="check-line"><input type="checkbox" v-model="transaction" /> 使用事务（任一批失败则整体回滚）</label>
-              <label class="check-line"><input type="checkbox" v-model="dryRun" /> 仅预览，不写入数据库（推荐先执行）</label>
             </div>
           </div>
-        </div>
-        <div v-if="!dryRun" class="alert alert-warn">
-          <Icon name="alert" :size="15" />
-          <span>已关闭「仅预览」：点击执行会真实写入数据，请确认目标表与文件无误。</span>
         </div>
       </template>
 
@@ -239,7 +244,7 @@ function restart() {
             :compact="true"
             icon="upload"
             title="准备就绪"
-            description="点击下方「开始预览 / 开始导入」执行；建议先保持「仅预览」。"
+            description="点击「预览」核对将要写入的内容，确认无误后点「导入数据」真实写入。"
           />
           <div v-else class="card">
             <div class="card-head"><Icon name="check" :size="14" /><h4>{{ dryRun ? "预览结果" : "导入结果" }}</h4></div>
@@ -269,9 +274,10 @@ function restart() {
       <template v-else>
         <span class="grow"></span>
         <button class="btn" :disabled="busy" @click="goto(3)"><Icon name="settings" :size="13" /> 修改选项</button>
-        <button class="btn btn-primary" :disabled="busy" @click="run">
+        <button class="btn" :disabled="busy" @click="run(true)"><Icon name="eye" :size="13" /> 预览</button>
+        <button class="btn btn-primary" :disabled="busy" @click="run(false)">
           <span v-if="busy" class="spinner" style="width: 12px; height: 12px"></span>
-          <Icon v-else name="upload" :size="13" /> {{ dryRun ? "开始预览" : "开始导入" }}
+          <Icon v-else name="upload" :size="13" /> 导入数据
         </button>
       </template>
     </div>

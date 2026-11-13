@@ -24,6 +24,7 @@ const emit = defineEmits<{
   (e: "rowselection", rows: number[]): void;
   (e: "draftedit", p: { rowIndex: number; column: string; value: string }): void;
   (e: "draftremove", rowIndex: number): void;
+  (e: "rowdelete", index: number): void;
 }>();
 
 const store = useWorkspace();
@@ -31,7 +32,7 @@ const pages = computed(() => props.outcome?.pages ?? []);
 const activePage = ref(0);
 const showJson = ref(false);
 const sortState = ref<{ col: number; desc: boolean } | null>(null);
-const selectedCell = ref<{ text: string; column: string } | null>(null);
+const selectedCell = ref<{ text: string; column: string; ri: number } | null>(null);
 const editing = ref<{ pi: number; ri: number; ci: number; column: string } | null>(null);
 const draft = ref("");
 
@@ -126,7 +127,7 @@ function toggleRow(ri: number) {
 }
 
 function selectCell(ri: number, ci: number, cell: Cell, column: string) {
-  selectedCell.value = { text: effectiveDisplay(ri, ci, cell), column };
+  selectedCell.value = { text: effectiveDisplay(ri, ci, cell), column, ri };
 }
 
 async function startEdit(pi: number, ri: number, ci: number, column: string, cell: Cell) {
@@ -244,7 +245,16 @@ defineExpose({ copyText, asText });
 
     <template v-else>
       <div v-if="showJson" class="scroll grow json-view">
-        <pre v-for="(doc, i) in pageDocs" :key="i" class="code">{{ doc }}</pre>
+        <div v-for="(doc, i) in pageDocs" :key="i" class="doc-block">
+          <div v-if="editable" class="doc-head">
+            <span class="dim mono"># {{ i + 1 }}</span>
+            <span class="grow"></span>
+            <button class="btn btn-sm btn-danger" @click="emit('rowdelete', i)">
+              <Icon name="trash" :size="12" /> 删除
+            </button>
+          </div>
+          <pre class="code">{{ doc }}</pre>
+        </div>
       </div>
 
       <div v-else class="scroll grow grid-scroll">
@@ -284,7 +294,7 @@ defineExpose({ copyText, asText });
                 :key="ci"
                 class="cell"
                 :style="colStyle(pageColumns[ci]?.name ?? '')"
-                :class="{ null: cell?.null, edited: isEdited(item.ri, pageColumns[ci]?.name ?? ''), 'cell-active': selectedCell?.column === pageColumns[ci]?.name }"
+                :class="{ null: cell?.null, edited: isEdited(item.ri, pageColumns[ci]?.name ?? ''), 'cell-active': selectedCell?.ri === item.ri && selectedCell?.column === pageColumns[ci]?.name }"
                 :title="effectiveDisplay(item.ri, ci, cell)"
                 @click="selectCell(item.ri, ci, cell, pageColumns[ci]?.name ?? '')"
                 @dblclick="startEdit(activePage, item.ri, ci, pageColumns[ci]?.name ?? '', cell)"
@@ -379,5 +389,8 @@ defineExpose({ copyText, asText });
 .grid-foot { display: flex; align-items: center; gap: 9px; padding: 6px 10px; border-top: 1px solid var(--border); font-size: var(--fs-xs); flex-shrink: 0; flex-wrap: wrap; }
 .grid-msg { padding: 4px 10px; font-size: var(--fs-xs); color: var(--text-dim); border-top: 1px solid var(--border); }
 .json-view { padding: 10px; }
+.doc-block { margin-bottom: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
+.doc-block .doc-head { display: flex; align-items: center; gap: 8px; padding: 5px 8px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
+.doc-block pre { margin: 0; border: 0; border-radius: 0; }
 .json-view pre { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px; margin-bottom: 8px; font-size: var(--fs-xs); line-height: 1.6; overflow: auto; }
 </style>

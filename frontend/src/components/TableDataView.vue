@@ -54,6 +54,12 @@ const effectiveKeys = computed(() => (keyCols.value.length ? keyCols.value : act
 const loadedRows = computed(() => outcome.value?.pages?.[0]?.rows?.length ?? 0);
 const canNext = computed(() => loadedRows.value >= maxRows.value);
 
+// Mongo 集合以文档为单位编辑：用 JSON 输入框新增文档，按 _id 删除文档。
+const isMongo = computed(
+  () => (store.connections.find((c) => c.name === props.tab.conn)?.kind ?? "") === "mongodb",
+);
+const pageDocs = computed(() => outcome.value?.pages?.[0]?.json_documents ?? []);
+
 // 草稿行转 INSERT 值：留空列不提供，输入 NULL 表示显式空值。
 function draftToValues(d: Record<string, string>): Record<string, string | null> {
   const values: Record<string, string | null> = {};
@@ -93,7 +99,9 @@ async function refresh() {
     const req = {
       conn: props.tab.conn,
       query: {
-        language: "sql",
+        // 留空，由后端按连接能力自动选择原生语言（关系型→sql，Mongo→mongo_filter，Redis→redis）。
+        // 显式写 "sql" 会被各模块的执行入口拒绝（如 MongoDB 只接受 JSON 查询）。
+        language: "",
         ref: refObj.value,
         conditions: conditions.value.filter((c) => c.column && (c.value ?? "") !== ""),
         order_terms: sorts.value.filter((s) => s.column),
@@ -332,6 +340,107 @@ async function apply() {
     applying.value = false;
   }
 }
+
+// ---- Mongo 文档编辑：JSON 输入新增 / 删除 ----
+const showDocModal = ref(false);
+const docText = ref("{\n  \n}");
+const docError = ref("");
+
+function openInsertDoc() {
+  docText.value = "{\n  \n}";
+  docError.value = "";
+  showDocModal.value = true;
+}
+// 格式化（pretty-print）并顺带校验 JSON。
+function formatDoc() {
+  try {
+    const obj = JSON.parse(docText.value);
+    docText.value = JSON.stringify(obj, null, 2);
+    docError.value = "";
+  } catch (e: any) {
+    docError.value = "JSON 解析失败：" + (e?.message ?? e);
+  }
+}
+async function insertDoc() {
+  let obj: any;
+  try {
+    obj = JSON.parse(docText.value);
+  } catch (e: any) {
+    docError.value = "JSON 解析失败：" + (e?.message ?? e);
+    return;
+  }
+  if (obj === null || typeof obj !== "object" || Array.isArray(obj)) {
+    docError.value = "请输入一个 JSON 对象（即单个文档）";
+    return;
+  }
+  const values: Record<string, string | null> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v === null) values[k] = null;
+    else values[k] = JSON.stringify(v);
+  }
+  if (!Object.keys(values).length) {
+    docError.value = "文档为空，无法插入";
+    return;
+  }
+  applying.value = true;
+  try {
+    const res = await api.applyDataEdit(props.tab.conn, {
+      ref: refObj.value,
+      key_columns: [],
+      edits: [{ kind: "insert", values }],
+      transaction: false,
+    });
+    store.setStatus(`已插入 ${res.applied} 个文档`, "ok");
+    showDocModal.value = false;
+    await refresh();
+  } catch (e: any) {
+    docError.value = e?.message ?? String(e);
+    store.setStatus(`插入失败：${docError.value}`, "error");
+  } finally {
+    applying.value = false;
+  }
+}
+
+// 在 JSON 文档视图中按 _id 直接删除（规避行号对齐问题）。
+async function deleteDocByIndex(i: number) {
+  const text = pageDocs.value[i];
+  if (text === undefined) return;
+  let doc: any;
+  try {
+    doc = JSON.parse(text);
+  } catch {
+    store.setStatus("无法解析该文档，无法定位删除", "error");
+    return;
+  }
+  if (doc?._id === undefined) {
+    store.setStatus("该文档缺少 _id，无法安全删除", "error");
+    return;
+  }
+  const idStr = typeof doc._id === "object" ? JSON.stringify(doc._id) : String(doc._id);
+  const ok = await store.confirm({
+    title: "删除文档",
+    message: `确认删除 _id = ${idStr} ？该操作不可恢复。`,
+    danger: true,
+    confirmText: "删除",
+  });
+  if (!ok) return;
+  applying.value = true;
+  try {
+    await api.applyDataEdit(props.tab.conn, {
+      ref: refObj.value,
+      key_columns: ["_id"],
+      edits: [{ kind: "delete", key: { _id: idStr } }],
+      transaction: false,
+    });
+    store.setStatus("已删除 1 个文档", "ok");
+    await refresh();
+  } catch (e: any) {
+    store.setStatus(`删除失败：${e?.message ?? e}`, "error");
+  } finally {
+    applying.value = false;
+  }
+}
+
 </script>
 
 <template>
@@ -431,19 +540,22 @@ async function apply() {
     </div>
 
     <div class="toolbar edit-bar">
-      <button class="btn btn-sm" :disabled="!colNames.length" title="在表格下方增加一行空行" @click="addDraftRow">
+      <button v-if="!isMongo" class="btn btn-sm" :disabled="!colNames.length" title="在表格下方增加一行空行" @click="addDraftRow">
         <Icon name="plus" :size="13" /> 新增行
         <span v-if="drafts.length" class="badge badge-accent">{{ drafts.length }}</span>
+      </button>
+      <button v-else class="btn btn-sm btn-primary" title="以 JSON 文档形式新增一行" @click="openInsertDoc">
+        <Icon name="plus" :size="13" /> 新增文档
       </button>
       <button class="btn btn-sm btn-danger" :disabled="!selectedRows.length" title="删除选中的行" @click="markDeleted">
         <Icon name="trash" :size="13" /> 删除选中 ({{ selectedRows.length }})
       </button>
       <button v-if="deleteRows.length" class="btn btn-sm" @click="unmarkDeleted">撤销删除标记</button>
       <span class="divider-v"></span>
-      <button class="btn btn-sm" :disabled="!selectedRows.length" title="将选中行复制到本页剪贴板" @click="copySelectedRows">
+      <button v-if="!isMongo" class="btn btn-sm" :disabled="!selectedRows.length" title="将选中行复制到本页剪贴板" @click="copySelectedRows">
         <Icon name="copy" :size="13" /> 复制选中 ({{ selectedRows.length }})
       </button>
-      <button class="btn btn-sm" :disabled="!copiedRows.length" title="把已复制的行作为新记录插入" @click="insertCopiedRows">
+      <button v-if="!isMongo" class="btn btn-sm" :disabled="!copiedRows.length" title="把已复制的行作为新记录插入" @click="insertCopiedRows">
         <Icon name="paste" :size="13" /> 插入复制的行 ({{ copiedRows.length }})
       </button>
       <span class="divider-v"></span>
@@ -494,10 +606,42 @@ async function apply() {
         @rowselection="selectedRows = $event"
         @draftedit="onDraftEdit"
         @draftremove="removeDraft"
+        @rowdelete="deleteDocByIndex"
       />
     </div>
 
     <ContextMenu :open="ctxMenu.open" :x="ctxMenu.x" :y="ctxMenu.y" :items="ctxMenu.items" @close="ctxMenu.open = false" />
+
+    <div v-if="showDocModal" class="modal-mask" @click.self="showDocModal = false">
+      <div class="modal card">
+        <div class="card-head">
+          <Icon name="layers" :size="14" />
+          <h4>新增 MongoDB 文档</h4>
+          <span class="grow"></span>
+          <button class="btn btn-icon" style="width: 22px; height: 22px" @click="showDocModal = false">
+            <Icon name="close" :size="12" />
+          </button>
+        </div>
+        <div class="card-body col" style="gap: 8px">
+          <span class="faint" style="font-size: 11px">
+            输入一个 JSON 文档（对象）。嵌套对象 / 数组 / ObjectId（<code>{"$oid":"..."}</code>）均会被保留。
+          </span>
+          <textarea v-model="docText" class="doc-input mono" :class="{ invalid: !!docError }" spellcheck="false" placeholder='{ "name": "alice", "age": 30 }'></textarea>
+          <div v-if="docError" class="alert alert-error" style="margin: 0">{{ docError }}</div>
+        </div>
+        <div class="card-foot row" style="gap: 8px">
+          <button class="btn btn-sm" title="格式化并校验 JSON" @click="formatDoc">
+            <Icon name="code" :size="12" /> 格式化
+          </button>
+          <span class="grow"></span>
+          <button class="btn btn-sm" @click="showDocModal = false">取消</button>
+          <button class="btn btn-sm btn-primary" :disabled="applying" @click="insertDoc">
+            <span v-if="applying" class="spinner" style="width: 12px; height: 12px"></span>
+            <Icon v-else name="save" :size="12" /> 插入文档
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -510,4 +654,10 @@ async function apply() {
 .preview-box { flex-shrink: 0; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 9px 11px; }
 .preview-box pre { max-height: 150px; overflow: auto; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 9px; font-size: 11px; line-height: 1.6; }
 .grid-pane { flex: 1; min-height: 0; min-width: 0; display: flex; overflow: hidden; }
+.modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 20px; }
+.modal { width: min(640px, 100%); max-height: 86vh; display: flex; flex-direction: column; }
+.modal .card-body { overflow: auto; }
+.card-foot { display: flex; align-items: center; gap: 8px; padding: 9px 11px; border-top: 1px solid var(--border); flex-shrink: 0; }
+.doc-input { width: 100%; min-height: 280px; resize: vertical; font-family: var(--mono); font-size: 13px; line-height: 1.55; background: var(--bg); border-color: var(--border); }
+.doc-input.invalid { border-color: var(--danger); }
 </style>

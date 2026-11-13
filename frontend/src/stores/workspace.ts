@@ -10,7 +10,7 @@ import type {
 import * as api from "@/api/client";
 import { useSettings } from "./settings";
 
-export type TabType = "query" | "data" | "structure" | "designer" | "export" | "import" | "redis-keys";
+export type TabType = "query" | "data" | "structure" | "designer" | "export" | "import" | "redis-keys" | "redis-key" | "mongo-coll";
 export type StatusLevel = "info" | "error" | "ok" | "warn";
 
 export interface Tab {
@@ -27,6 +27,8 @@ export interface Tab {
   /** designer: create = 新表，alter = 修改已有表。 */
   mode?: "create" | "alter";
   format?: string;
+  /** redis-key：已存在的键默认以只读方式打开，点击「修改」进入编辑态。 */
+  readOnly?: boolean;
 }
 
 export interface Toast {
@@ -355,6 +357,87 @@ export const useWorkspace = defineStore("workspace", () => {
     leftCollapsed.value = false;
   }
 
+  /** Redis 键编辑器页签：双击 key 或「新建键」打开；key 为空表示新建。 */
+  // readOnly 仅对「已存在的键」生效：默认以只读（浏览）方式打开，点击「修改」进入编辑态。
+  // 新建键（key 为空）始终为可编辑的创建态。
+  function openRedisKeyTab(conn: string, database: string, key: string, readOnly = true) {
+    if (key) {
+      const existing = tabs.value.find(
+        (t) =>
+          t.type === "redis-key" &&
+          t.conn === conn &&
+          t.database === database &&
+          (t.ref?.name ?? "") === key,
+      );
+      if (existing) {
+        activeTabId.value = existing.id;
+        activeConn.value = conn;
+        leftCollapsed.value = false;
+        return;
+      }
+    }
+    const id = `rk${++tabSeq}`;
+    const isCreate = !key;
+    tabs.value.push({
+      id,
+      type: "redis-key",
+      conn,
+      database,
+      ref: { database, name: key },
+      title: key ? `键 · ${key}` : `新建键 · ${database}`,
+      readOnly: isCreate ? false : readOnly,
+    });
+    activeTabId.value = id;
+    activeConn.value = conn;
+    activeDb.value = database;
+    leftCollapsed.value = false;
+  }
+
+  /** Redis「新建数据库」：把指定逻辑库下标加入树并显示，便于浏览尚未出现在 keyspace 的空库。 */
+  async function createRedisDb(conn: string, dbName: string) {
+    const list = dbCache.value[conn] ?? [];
+    if (!list.some((d) => d.name === dbName)) {
+      dbCache.value[conn] = [...list, { name: dbName } as DatabaseInfo];
+    }
+    try {
+      await loadObjects(conn, dbName);
+    } catch {
+      /* 空库或越界下标，忽略 */
+    }
+  }
+
+  /** Mongo 集合编辑器页签：name 为空表示新建集合；非空表示查看/修改集合结构（校验器/索引）。 */
+  function openMongoCollectionTab(conn: string, database: string, name: string) {
+    if (name) {
+      const existing = tabs.value.find(
+        (t) =>
+          t.type === "mongo-coll" &&
+          t.conn === conn &&
+          t.database === database &&
+          (t.ref?.name ?? "") === name,
+      );
+      if (existing) {
+        activeTabId.value = existing.id;
+        activeConn.value = conn;
+        leftCollapsed.value = false;
+        return;
+      }
+    }
+    const id = `mc${++tabSeq}`;
+    tabs.value.push({
+      id,
+      type: "mongo-coll",
+      conn,
+      database,
+      ref: { database, name },
+      title: name ? `集合 · ${name}` : `新建集合 · ${database}`,
+    });
+    activeTabId.value = id;
+    activeConn.value = conn;
+    activeDb.value = database;
+    leftCollapsed.value = false;
+  }
+
   function openStructureTab(conn: string, ref: ObjectRef) {
     const existing = findTab("structure", conn, ref);
     if (existing) {
@@ -570,6 +653,9 @@ export const useWorkspace = defineStore("workspace", () => {
     openDataTab,
     openStructureTab,
     openRedisKeysTab,
+    openRedisKeyTab,
+    createRedisDb,
+    openMongoCollectionTab,
     openDesignerTab,
     openExportTab,
     openImportTab,

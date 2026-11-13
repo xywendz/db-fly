@@ -48,6 +48,9 @@ func buildURI(cfg domain.ConnectionConfig) (string, error) {
 	u := &url.URL{
 		Scheme: "mongodb",
 		Host:   net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)),
+		// 必须带 "/" 分隔主机与查询串，否则 mongo-driver 报
+		// "must have a / before the query ?"。
+		Path: "/",
 	}
 	if cfg.User != "" {
 		u.User = url.UserPassword(cfg.User, cfg.Password)

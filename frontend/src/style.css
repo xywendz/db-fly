@@ -161,7 +161,8 @@ button { font-family: inherit; font-size: var(--fs-sm); }
 .btn-ghost { background: transparent; border-color: transparent; color: var(--text-dim); }
 .btn-ghost:hover:not(:disabled) { background: var(--surface-3); color: var(--text); }
 .btn-sm { padding: 3px 8px; font-size: var(--fs-xs); }
-.btn-icon { padding: 5px; width: 28px; height: 28px; background: transparent; border-color: transparent; color: var(--text-dim); }
+.btn-icon { padding: 5px; width: 28px; height: 28px; background: transparent; border-color: transparent; color: var(--text-dim); cursor: pointer; }
+.btn-icon:disabled { cursor: default; }
 .btn-icon:hover:not(:disabled) { background: var(--surface-3); color: var(--text); }
 .btn.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-hover); }
 .btn-group { display: inline-flex; gap: 2px; }

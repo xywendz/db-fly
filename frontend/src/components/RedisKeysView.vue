@@ -28,10 +28,11 @@ async function search() {
     const res = await api.executeQuery({
       conn: props.tab.conn,
       query: {
-        language: "sql",
+        language: "redis",
         ref: { database: db, name: "" } as ObjectRef,
         // filter 作为 SCAN 的 MATCH 模式；后端用游标分批扫描，不会阻塞服务端。
-        filter: pattern.value.trim(),
+        // 留空时默认 "*" 匹配全部（避免命中后端「查询内容不能为空」的校验）。
+        filter: pattern.value.trim() || "*",
         max_rows: maxRows.value,
       },
     });
@@ -46,7 +47,7 @@ async function search() {
 
 function openKey(key: string) {
   if (!key) return;
-  store.openDataTab(props.tab.conn, { database: db, name: key });
+  store.openRedisKeyTab(props.tab.conn, db, key);
 }
 </script>
 

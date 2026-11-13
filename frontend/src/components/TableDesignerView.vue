@@ -92,7 +92,7 @@ function otherChanged(r: AlterColumnRow) {
     !!s.nullable !== !!o.nullable ||
     !!s.primary_key !== !!o.primary_key ||
     !!s.auto_increment !== !!o.auto_increment ||
-    (s.default ?? "") !== (o.has_default ? o.default : "") ||
+    (s.default ?? "") !== (o.has_default ? (o.default ?? "") : "") ||
     (s.comment ?? "") !== (o.comment ?? "")
   );
 }
@@ -325,7 +325,7 @@ function openData() {
     </div>
 
     <!-- 目标信息常驻，子 tab 切换不丢失定位 -->
-    <div class="target-bar">
+    <div class="target-bar" v-if="!isAlter">
       <div class="field">
         <label class="field-label">连接 *</label>
         <select v-model="connName">

@@ -17,6 +17,9 @@ const expandedConns = ref<Record<string, boolean>>({});
 const expandedDbs = ref<Record<string, boolean>>({});
 const menu = ref({ open: false, x: 0, y: 0, items: [] as MenuItem[] });
 const loadingConns = ref<Record<string, boolean>>({});
+// 当前选中的树节点标识：连接 c:name / 库 d:conn|db / 对象 o:conn|db|name。
+// 单击与右键都会更新它，保证「选中资源」高亮在右键菜单出现时不会消失。
+const selectedKey = ref("");
 
 const q = computed(() => store.treeQuery.trim().toLowerCase());
 
@@ -89,6 +92,7 @@ function visibleObjs(conn: string, db: string): ObjectInfo[] {
 }
 
 async function toggleConn(c: ConnectionConfig) {
+  selectedKey.value = `c:${c.name}`;
   if (q.value) return;
   const open = !expandedConns.value[c.name];
   expandedConns.value[c.name] = open;
@@ -106,6 +110,7 @@ async function toggleConn(c: ConnectionConfig) {
 }
 
 async function toggleDb(conn: string, db: string) {
+  selectedKey.value = `d:${conn}|${db}`;
   const key = `${conn}|${db}`;
   if (q.value) return;
   const open = !expandedDbs.value[key];
@@ -455,19 +460,34 @@ function openMenu(e: MouseEvent, items: MenuItem[]) {
 }
 
 async function menuConn(e: MouseEvent, c: ConnectionConfig) {
+  selectedKey.value = `c:${c.name}`;
   const db = firstDb(c.name);
   await store.loadOpenConns().catch(() => {});
-  openMenu(e, [
+  const kind = c.kind;
+  const items: MenuItem[] = [
     { label: "新建查询", icon: "terminal", action: () => store.openQueryTab(c.name) },
     { label: "测试连接", icon: "bolt", action: () => testConn(c) },
     { separator: true },
-    { label: "新增数据库", icon: "database", action: () => createDatabase(c.name) },
-    {
-      label: "新建表",
-      icon: "table",
-      disabled: !store.hasCap(c.name, "create_table"),
-      action: () => store.openDesignerTab(c.name, db),
-    },
+  ];
+  if (kind === "redis") {
+    items.push(
+      { label: "新建 key", icon: "key", action: () => store.openRedisKeyTab(c.name, db, "") },
+      { label: "新建数据库", icon: "database", action: () => promptRedisDb(c.name) },
+    );
+  } else if (kind === "mongodb") {
+    items.push({ label: "新建集合", icon: "layers", action: () => store.openMongoCollectionTab(c.name, db, "") });
+  } else {
+    items.push(
+      { label: "新增数据库", icon: "database", action: () => createDatabase(c.name) },
+      {
+        label: "新建表",
+        icon: "table",
+        disabled: !store.hasCap(c.name, "create_table"),
+        action: () => store.openDesignerTab(c.name, db),
+      },
+    );
+  }
+  items.push(
     { label: "导入数据", icon: "upload", action: () => store.openImportTab(c.name, db, "") },
     { label: "导出数据", icon: "download", action: () => store.openExportTab(c.name, db, "") },
     { separator: true },
@@ -476,7 +496,27 @@ async function menuConn(e: MouseEvent, c: ConnectionConfig) {
     { label: "复制名称", icon: "copy", action: () => copyName(c.name) },
     { label: "关闭连接", icon: "power", danger: true, disabled: !store.openConns.includes(c.name), action: () => closeConn(c) },
     { label: "删除连接", icon: "trash", danger: true, action: () => removeConn(c) },
-  ]);
+  );
+  openMenu(e, items);
+}
+
+// 新建 Redis 逻辑库：输入下标（dbN / N）后加入树并加载其键。
+async function promptRedisDb(conn: string) {
+  const name = await store.promptText({
+    title: "新建数据库",
+    message: "输入 Redis 逻辑库下标，例如 db2 或 2（需在服务端 databases 配置范围内）。",
+    label: "逻辑库",
+    value: "db0",
+    confirmText: "添加",
+  });
+  if (!name) return;
+  const clean = name.trim().replace(/^db/i, "");
+  if (!/^\d+$/.test(clean)) {
+    store.setStatus("非法逻辑库下标", "error");
+    return;
+  }
+  await store.createRedisDb(conn, `db${clean}`);
+  store.setStatus(`已添加数据库 db${clean}`, "ok");
 }
 
 // 关闭已打开的连接，释放底层连接池等资源。
@@ -491,31 +531,68 @@ async function closeConn(c: ConnectionConfig) {
 }
 
 function menuDb(e: MouseEvent, conn: string, db: string) {
-  openMenu(e, [
-    { label: "新增数据库", icon: "database", action: () => createDatabase(conn) },
-    {
-      label: "新建表",
-      icon: "table",
-      disabled: !store.hasCap(conn, "create_table"),
-      action: () => store.openDesignerTab(conn, db),
-    },
+  selectedKey.value = `d:${conn}|${db}`;
+  const kind = connKind(conn);
+  const items: MenuItem[] = [
     { label: "新建查询", icon: "terminal", action: () => store.openQueryTab(conn) },
     { label: "刷新对象", icon: "refresh", action: () => refreshObjects(conn, db) },
     { separator: true },
     { label: "导入数据", icon: "upload", action: () => store.openImportTab(conn, db, "") },
     { label: "导出数据", icon: "download", action: () => store.openExportTab(conn, db, "") },
-    { label: "导出整个数据库", icon: "download", disabled: !relational(connKind(conn)), action: () => store.openExportTab(conn, db, "") },
-    { separator: true },
-    { label: "修改数据库", icon: "settings", action: () => alterDatabase(conn, db) },
-    { label: "重命名数据库", icon: "edit", action: () => renameDatabase(conn, db) },
-    { label: "删除数据库", icon: "trash", danger: true, action: () => dropDatabase(conn, db) },
-    { separator: true },
-    { label: "复制名称", icon: "copy", action: () => copyName(db) },
-  ]);
+  ];
+  if (kind === "redis") {
+    items.push({ label: "新建 key", icon: "key", action: () => store.openRedisKeyTab(conn, db, "") });
+  } else if (kind === "mongodb") {
+    items.push({ label: "新建集合", icon: "layers", action: () => store.openMongoCollectionTab(conn, db, "") });
+  } else {
+    items.push(
+      {
+        label: "新建表",
+        icon: "table",
+        disabled: !store.hasCap(conn, "create_table"),
+        action: () => store.openDesignerTab(conn, db),
+      },
+      { label: "导出整个数据库", icon: "download", disabled: !relational(connKind(conn)), action: () => store.openExportTab(conn, db, "") },
+      { separator: true },
+      { label: "修改数据库", icon: "settings", action: () => alterDatabase(conn, db) },
+      { label: "重命名数据库", icon: "edit", action: () => renameDatabase(conn, db) },
+      { label: "删除数据库", icon: "trash", danger: true, action: () => dropDatabase(conn, db) },
+    );
+  }
+  items.push({ separator: true }, { label: "复制名称", icon: "copy", action: () => copyName(db) });
+  openMenu(e, items);
 }
 
 function menuObj(e: MouseEvent, conn: string, db: string, o: ObjectInfo) {
+  selectedKey.value = `o:${conn}|${db}|${o.name}`;
   const ref = objRef(db, o.name);
+  // Redis 的「对象」即键：只提供键级操作，不展示表结构 / 复制表 / 截断等关系型功能。
+  if (connKind(conn) === "redis") {
+    openMenu(e, [
+      { label: "打开", icon: "key", action: () => store.openRedisKeyTab(conn, db, o.name) },
+      { separator: true },
+      { label: "重命名", icon: "edit", action: () => renameObject(conn, db, o) },
+      { label: "删除", icon: "trash", danger: true, action: () => dropObject(conn, db, o) },
+      { separator: true },
+      { label: "复制名称", icon: "copy", action: () => copyName(o.name) },
+    ]);
+    return;
+  }
+  if (connKind(conn) === "mongodb") {
+    openMenu(e, [
+      { label: "浏览数据", icon: "table", action: () => store.openDataTab(conn, ref) },
+      { label: "查看 / 修改结构", icon: "column", action: () => store.openMongoCollectionTab(conn, db, o.name) },
+      { separator: true },
+      { label: "导入数据", icon: "upload", action: () => store.openImportTab(conn, db, o.name) },
+      { label: "导出数据", icon: "download", action: () => store.openExportTab(conn, db, o.name) },
+      { separator: true },
+      { label: "重命名", icon: "edit", action: () => renameObject(conn, db, o) },
+      { label: "删除", icon: "trash", danger: true, action: () => dropObject(conn, db, o) },
+      { separator: true },
+      { label: "复制名称", icon: "copy", action: () => copyName(o.name) },
+    ]);
+    return;
+  }
   openMenu(e, [
     { label: "浏览数据", icon: "table", action: () => store.openDataTab(conn, ref) },
     { label: "查看 / 修改结构", icon: "column", action: () => store.openStructureTab(conn, ref) },
@@ -542,6 +619,21 @@ function menuObj(e: MouseEvent, conn: string, db: string, o: ObjectInfo) {
     { separator: true },
     { label: "复制名称", icon: "copy", action: () => copyName(o.name) },
   ]);
+}
+
+// 单击对象：选中该节点（高亮在右键时保持），并激活所属连接。
+function selectObj(conn: string, db: string, o: ObjectInfo) {
+  selectedKey.value = `o:${conn}|${db}|${o.name}`;
+  store.activate(conn);
+}
+
+// 双击对象：Redis 键打开键值编辑器；其它类型打开数据浏览。
+function onObjDblClick(conn: string, db: string, o: ObjectInfo) {
+  if (connKind(conn) === "redis") {
+    store.openRedisKeyTab(conn, db, o.name);
+    return;
+  }
+  store.openDataTab(conn, objRef(db, o.name));
 }
 
 const kindIcon: Record<string, string> = {
@@ -596,7 +688,7 @@ function objIcon(o: ObjectInfo) {
       <template v-for="c in visibleConns()" :key="c.name">
         <div
           class="tree-node"
-          :class="{ selected: store.activeConn === c.name }"
+          :class="{ selected: selectedKey === `c:${c.name}` || store.activeConn === c.name }"
           @click="toggleConn(c)"
           @contextmenu.prevent="menuConn($event, c)"
         >
@@ -629,6 +721,7 @@ function objIcon(o: ObjectInfo) {
           <template v-for="db in visibleDbs(c.name)" :key="db.name">
             <div
               class="tree-node"
+              :class="{ selected: selectedKey === `d:${c.name}|${db.name}` }"
               @click="toggleDb(c.name, db.name)"
               @dblclick="onDbDblClick(c.name, db.name)"
               @contextmenu.prevent="menuDb($event, c.name, db.name)"
@@ -637,7 +730,7 @@ function objIcon(o: ObjectInfo) {
               <Icon name="folder" :size="14" style="color: var(--warn)" />
               <span class="label" :title="db.name">{{ db.name }}</span>
               <span class="node-actions">
-                <button class="btn-icon" style="width: 20px; height: 20px" title="新建表" @click.stop="store.openDesignerTab(c.name, db.name)">
+                <button class="btn-icon" style="width: 20px; height: 20px" :title="connKind(c.name) === 'redis' ? '新建 key' : connKind(c.name) === 'mongodb' ? '新建集合' : '新建表'" @click.stop="connKind(c.name) === 'redis' ? store.openRedisKeyTab(c.name, db.name, '') : connKind(c.name) === 'mongodb' ? store.openMongoCollectionTab(c.name, db.name, '') : store.openDesignerTab(c.name, db.name)">
                   <Icon name="plus" :size="13" />
                 </button>
                 <button class="btn-icon" style="width: 20px; height: 20px" title="更多操作" @click.stop="menuDb($event, c.name, db.name)">
@@ -653,18 +746,28 @@ function objIcon(o: ObjectInfo) {
                 v-for="o in visibleObjs(c.name, db.name)"
                 :key="o.name"
                 class="tree-node obj"
-                @click="store.activate(c.name)"
-                @dblclick="store.openDataTab(c.name, objRef(db.name, o.name))"
+                :class="{ selected: selectedKey === `o:${c.name}|${db.name}|${o.name}` }"
+                @click="selectObj(c.name, db.name, o)"
+                @dblclick="onObjDblClick(c.name, db.name, o)"
                 @contextmenu.prevent="menuObj($event, c.name, db.name, o)"
               >
                 <Icon :name="objIcon(o)" :size="13" style="color: var(--text-dim)" />
                 <span class="label" :title="o.name">{{ o.name }}</span>
                 <span class="badge">{{ o.type }}</span>
                 <span class="node-actions">
-                  <button class="btn-icon" style="width: 20px; height: 20px" title="浏览数据" @click.stop="store.openDataTab(c.name, objRef(db.name, o.name))">
+                  <button v-if="connKind(c.name) === 'redis'" class="btn-icon" style="width: 20px; height: 20px" title="打开" @click.stop="store.openRedisKeyTab(c.name, db.name, o.name)">
+                    <Icon name="key" :size="12" />
+                  </button>
+                  <button v-else-if="connKind(c.name) === 'mongodb'" class="btn-icon" style="width: 20px; height: 20px" title="浏览数据" @click.stop="store.openDataTab(c.name, objRef(db.name, o.name))">
                     <Icon name="table" :size="12" />
                   </button>
-                  <button class="btn-icon" style="width: 20px; height: 20px" title="查看结构" @click.stop="store.openStructureTab(c.name, objRef(db.name, o.name))">
+                  <button v-else class="btn-icon" style="width: 20px; height: 20px" title="浏览数据" @click.stop="store.openDataTab(c.name, objRef(db.name, o.name))">
+                    <Icon name="table" :size="12" />
+                  </button>
+                  <button v-if="connKind(c.name) === 'mongodb'" class="btn-icon" style="width: 20px; height: 20px" title="查看 / 修改结构" @click.stop="store.openMongoCollectionTab(c.name, db.name, o.name)">
+                    <Icon name="column" :size="12" />
+                  </button>
+                  <button v-else-if="connKind(c.name) !== 'redis'" class="btn-icon" style="width: 20px; height: 20px" title="查看结构" @click.stop="store.openStructureTab(c.name, objRef(db.name, o.name))">
                     <Icon name="column" :size="12" />
                   </button>
                 </span>

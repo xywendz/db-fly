@@ -64,9 +64,6 @@ function toSpec(c: ColumnInfo): ColumnSpec {
     primary_key: c.primary_key,
   };
 }
-function newCol(): ColumnSpec {
-  return { name: "", type: "VARCHAR(255)", nullable: true, primary_key: false, auto_increment: false };
-}
 function newIdx(): NewIdx {
   return { name: "", columns: "", unique: false };
 }
@@ -199,7 +196,6 @@ function otherChanged(r: ColRow) {
     (s.comment ?? "") !== (o.comment ?? "")
   );
 }
-function addColumn() { newColumns.value.push(newCol()); }
 function addIndex() { newIndexes.value.push(newIdx()); }
 function discard() { resetChanges(schema.value); }
 
@@ -440,7 +436,6 @@ async function rename() {
       <div class="sv-body scroll">
         <template v-if="tab === 'columns'">
           <div class="row sv-tools">
-            <button class="btn btn-sm" @click="addColumn"><Icon name="plus" :size="12" /> 新增字段</button>
             <span class="faint" style="font-size: 11px">双击单元格可就地修改；字段类型用下拉框选择，布尔列双击切换</span>
           </div>
           <div class="scroll sv-table">
@@ -489,24 +484,6 @@ async function rename() {
                       <Icon :name="r.state === 'drop' ? 'refresh' : 'trash'" :size="12" />
                     </button>
                   </td>
-                </tr>
-                <tr v-for="(c, i) in newColumns" :key="'new' + i" class="row-added">
-                  <td class="num">+</td>
-                  <td><input v-model="c.name" class="cell-input" placeholder="新字段名" /></td>
-                  <td>
-                    <select v-model="c.type" class="cell-input">
-                      <optgroup v-for="g in typeGroups" :key="g.label" :label="g.label">
-                        <option v-for="t in g.options" :key="t" :value="t">{{ t }}</option>
-                      </optgroup>
-                    </select>
-                  </td>
-                  <td><input type="checkbox" v-model="c.nullable" /></td>
-                  <td><input type="checkbox" v-model="c.primary_key" /></td>
-                  <td><input type="checkbox" v-model="c.auto_increment" /></td>
-                  <td><input v-model="c.default" class="cell-input" placeholder="可选" /></td>
-                  <td><input v-model="c.comment" class="cell-input" placeholder="可选" /></td>
-                  <td><span class="badge badge-ok">新增</span></td>
-                  <td><button class="btn btn-icon" title="移除" @click="newColumns.splice(i, 1)"><Icon name="close" :size="12" /></button></td>
                 </tr>
               </tbody>
             </table>
