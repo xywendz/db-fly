@@ -24,7 +24,9 @@ import type {
   TableDefinition,
   TableSchema,
 } from "@/types/domain";
-import { raw } from "./bridge";
+// @/runtime 在编译期由 Vite alias 指向 GUI 或 Web 实现；
+// 43 个业务门面与 UI 组件在两种模式下完全一致。
+import { raw } from "@/runtime";
 
 // 统一的错误类型，便于 UI 区分展示。
 export class DbError extends Error {

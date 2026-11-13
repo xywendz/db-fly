@@ -12,11 +12,8 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
-	"github.com/db-fly/db-fly/internal/app"
+	"github.com/db-fly/db-fly/internal/bootstrap"
 	"github.com/db-fly/db-fly/internal/bridge"
-	"github.com/db-fly/db-fly/internal/platform/audit"
-	"github.com/db-fly/db-fly/internal/platform/config"
-	"github.com/db-fly/db-fly/internal/platform/credential"
 	// 注册全部数据库业务模块（各自 init() 自注册到 provider 注册中心）。
 	_ "github.com/db-fly/db-fly/internal/provider/all"
 )
@@ -48,25 +45,13 @@ type emitter struct{ wailsApp *application.App }
 func (e emitter) Emit(name string, data ...any) { e.wailsApp.Event.Emit(name, data...) }
 
 func main() {
-	dir, err := config.DefaultDir()
+	// 与 B/S 入口共用同一套装配链（config / credential / audit / app.New）。
+	rt, err := bootstrap.New("")
 	if err != nil {
-		log.Fatalf("无法确定数据目录: %v", err)
+		log.Fatalf("初始化业务内核失败: %v", err)
 	}
-	cfg, err := config.New(dir)
-	if err != nil {
-		log.Fatalf("加载配置失败: %v", err)
-	}
-	secrets, err := credential.New(dir)
-	if err != nil {
-		log.Fatalf("初始化凭证存储失败: %v", err)
-	}
-	var logger audit.Logger = audit.Nop{}
-	if l, lerr := audit.New(dir); lerr == nil {
-		logger = l
-	}
-
-	core := app.New(cfg, secrets, logger)
-	svc := bridge.NewService(core, bridge.Version, dir, secrets.Name())
+	core := rt.App
+	svc := bridge.NewService(core, bridge.Version, rt.DataDir, rt.SecretsName)
 
 	wailsApp := application.New(application.Options{
 		Name:        "db-fly",
@@ -95,7 +80,7 @@ func main() {
 		MinHeight: 640,
 	})
 
-	wailsApp.OnShutdown(func() { _ = core.Close() })
+	wailsApp.OnShutdown(func() { _ = rt.Close() })
 
 	if err := wailsApp.Run(); err != nil {
 		log.Fatalf("应用运行失败: %v", err)

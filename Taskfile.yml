@@ -8,7 +8,8 @@
 # This project does NOT use the generated Wails v3 Taskfile layout: the Vue build
 # is embedded via //go:embed, wails3 v3 on Windows is pure Go (CGO_ENABLED=0,
 # no gcc), and the Windows icon is linked from a generated .syso. All of that
-# lives in build/gui.ps1, so the tasks here are thin wrappers around that script.
+# lives in build/gui.ps1, so the GUI tasks here are thin wrappers around that
+# script. build:web wraps build/web.ps1 for the B/S mode (pure Go Linux binary).
 
 version: '3'
 
@@ -25,6 +26,22 @@ tasks:
     # build/gui.ps1 owns all Go flags, so those variables are intentionally unused.
     cmds:
       - powershell -NoProfile -ExecutionPolicy Bypass -File ./build/gui.ps1
+
+  build:gui:
+    desc: Build the GUI local mode (alias of build, keeps wails3 CLI compatible)
+    cmds:
+      - task: build
+
+  build:web:
+    desc: Build the B/S mode (Web frontend + Go embed + pure-Go Linux binary)
+    cmds:
+      - powershell -NoProfile -ExecutionPolicy Bypass -File ./build/web.ps1
+
+  build:all:
+    desc: Build both entries (GUI local mode + B/S mode)
+    cmds:
+      - task: build
+      - task: build:web
 
   package:
     desc: Alias of build; this project ships a single exe, not an installer

@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onUnmounted } from "vue";
 import { useWorkspace, type Tab, type TabType } from "@/stores/workspace";
 import * as api from "@/api/client";
+import { runtimeMode } from "@/runtime";
 import type { AppInfo, ConnectionConfig } from "@/types/domain";
 import type { MenuItem } from "@/types/ui";
 import Icon from "./components/ui/Icon.vue";
@@ -294,7 +295,7 @@ onUnmounted(() => {
           <div>
             <h3 style="font-size: 16px">db-fly</h3>
             <p class="dim" style="font-size: 12px">模块化、多数据库、跨平台的数据库客户端</p>
-            <span class="badge badge-accent">wails3 + Vue 3</span>
+            <span class="badge badge-accent">{{ runtimeMode === "web" ? "Web + Vue 3" : "wails3 + Vue 3" }}</span>
           </div>
         </div>
         <div class="divider-h"></div>

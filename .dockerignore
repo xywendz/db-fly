@@ -1,0 +1,17 @@
+.git
+.gitignore
+**/node_modules
+frontend/dist
+frontend/dist-web
+frontend/.vite
+dist
+build/windows
+cmd/db-fly-gui/assets
+cmd/db-fly-gui/*.syso
+*.exe
+*.test
+*.out
+*.log
+.tmp-edge*
+.vscode
+.codebuddy

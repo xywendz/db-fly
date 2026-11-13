@@ -616,3 +616,183 @@ dbctl info
 3. 关系型模块优先复用 `internal/provider/sqlkit`：`BuildPreview` 负责 filter/sort 与分页，`Editor` 负责参数化回写，`Schema` + `ScriptRunner` 负责 DDL 脚本装配；只需实现方言元数据查询与 `DDLDriver`。
 4. 在 `internal/provider/all/all.go` 添加一行空白导入；GUI 连接类型下拉、CLI 默认端口与语言选择均由注册中心与能力声明驱动。
 5. 补充该模块的纯函数单元测试（可参照 SQLite 端到端测试），并执行 `./build/verify.ps1`。
+
+---
+
+## 5. B/S 双模式架构设计（GUI 本地模式 + Web 服务模式）
+
+### 5.1 目标与约束
+
+- **一套业务内核**：`internal/app` / `domain` / `platform` / `provider` 零改动复用，所有表现层共享同一个 `*app.App` 装配。
+- **保留本地 GUI**：Wails3 + Vue3 桌面程序继续可用，Wails 绑定（数字 ID IPC）与前端生成产物不重新生成、不变更。
+- **两套模板编译入口**：前端按 Vite mode 编译成两套独立产物；Go 按 cmd 入口编译成两个二进制。
+- **B/S 前端嵌入 Go 进程**：Web 产物由 `//go:embed` 打进服务端二进制，单文件部署，无独立 Nginx / Node 进程。
+- 表现层只允许依赖 `internal/bridge` 的 43 个 JSON DTO 方法，不允许直接拼 SQL 或读写配置。
+
+### 5.2 分层与依赖方向
+
+```mermaid
+graph TD
+    subgraph 前端源码 frontend/ (Vue3 + Pinia + TS)
+      SPA["页面/组件/stores<br/>只依赖 @/api/client"]
+      RTG["runtime/gui.ts<br/>Wails bindings + Dialogs"]
+      RTW["runtime/web.ts<br/>fetch RPC + 文件上传"]
+    end
+    SPA -->|编译期 alias @/runtime| RTG
+    SPA -->|编译期 alias @/runtime| RTW
+    RTG -->|Wails Call.ByID| BRIDGE
+    RTW -->|HTTP JSON| HTTPAPI
+    HTTPAPI["internal/httpapi<br/>RPC / upload / SSE / auth / static"] --> BRIDGE
+    BRIDGE["internal/bridge<br/>43 个 DTO 方法（纯 Go）"] --> APP
+    GUI["cmd/db-fly-gui (windows)<br/>Wails 窗口 + wails Event"] --> BRIDGE
+    HTTPAPI --> WEBUI["internal/webui<br/>//go:embed dist"]
+    HTTPAPI --> EVT["SSE Hub (EventEmitter)"]
+    BOOT["internal/bootstrap<br/>config / credential / audit / app.New"] --> APP
+    GUI --> BOOT
+    SRV["cmd/db-fly-server<br/>net/http + 优雅退出"] --> BOOT
+    SRV --> HTTPAPI
+    CLI["cmd/dbctl + internal/cli"] --> APP
+    APP["internal/app 用例层"] --> DOMAIN["domain / platform / provider"]
+```
+
+依赖规则新增两条：
+
+1. `internal/bridge` 在任何平台都不得链接 Wails；Wails 服务注册只存在于 `service_windows.go`（`//go:build windows`），供绑定生成器识别 `application.NewService`。
+2. `internal/httpapi` 只依赖 `bridge` / `domain` / 标准库；`cmd/*` 只负责装配与生命周期。
+
+### 5.3 两种编译入口
+
+| 入口 | 前端模板 | 前端产物 | Go 入口 | 产物 / 运行方式 |
+| --- | --- | --- | --- | --- |
+| GUI 本地模式 | `npm run build`（`--mode gui`，`@/runtime` → `runtime/gui.ts`） | `frontend/dist` → `cmd/db-fly-gui/assets`（Wails AssetServer embed） | `./cmd/db-fly-gui`（`//go:build windows`） | `dist/db-fly-gui.exe`（`CGO_ENABLED=0 -H windowsgui`） |
+| B/S 模式 | `npm run build:web`（`--mode web`，`@/runtime` → `runtime/web.ts`） | `frontend/dist-web` → `internal/webui/dist`（`//go:embed all:dist`） | `./cmd/db-fly-server`（全平台，纯 Go） | `dist/db-fly-server` / Docker 镜像，监听 HTTP |
+
+- Vite `resolve.alias` 在编译期物理替换 `@/runtime`，因此 GUI 产物不含 fetch 代码、Web 产物不含 `@wailsio/runtime`；`tsconfig` 的该别名指向 `runtime/index.ts`（类型检查用 GUI 实现）。
+- `Taskfile.yml`：`build` / `build:gui` 保持 Wails3 CLI 兼容，`build:web` 新增，`build:all` 构建两者。
+- `wails.json` 的 GUI 行为、图标与 `.syso` 生成流程不变。
+
+### 5.4 B/S 接口协议（业务语义）
+
+| 端点 | 方法 | 说明 |
+| --- | --- | --- |
+| `/api/rpc/{Method}` | POST | body `{"args":[...]}` → `{"result":T}`；白名单 43 个 Bridge 方法，反射调用，参数按 Go 签名逐个 JSON 解码 |
+| `/api/upload` | POST | multipart `file` → `{"path","name","size"}`，保存到当前用户私有上传目录 |
+| `/api/events` | GET | SSE，对应 `query:started` / `query:finished`，按用户隔离分发 |
+| `/api/health` | GET | `{"ok":true,"mode":"web","version":...}` |
+| `/api/auth/register\|login\|logout\|me` | POST/GET | 注册、登录、登出、当前用户（见第 6 章） |
+| `/login`、`/logout` | GET/POST | 注册/登录页面与兼容登出入口 |
+| `/*` | GET | `net/http` 静态资源 + SPA fallback 到 `index.html`；页面需登录，静态资源公开 |
+
+- 错误响应统一 `{"code","message"}`，`domain.CodeOf` 映射业务错误为 400、内部错误 500；前端 `DbError` 保持与 GUI 一致的错误体验。
+- `ImportFile` 的 `path` 在 RPC 层被强制重写并校验为上传目录内的绝对路径，禁止浏览器指定服务端任意文件；文件保留原扩展名以兼容 `detectImportFormat`。
+- RPC 白名单是显示接口契约：新增 Bridge 方法必须同时登记，避免把构造器/内部方法意外暴露成 HTTP 端点。
+
+### 5.5 业务行为差异与边界
+
+| 能力 | GUI 本地模式 | B/S 模式 |
+| --- | --- | --- |
+| 连接/历史/收藏/偏好 | `~/.db-fly/config.json` | 每用户 `users/<id>/config.json`（见第 6 章） |
+| 凭证加密 | Windows DPAPI | 非 Windows AES-GCM，必须固定 `DB_FLY_MASTER_KEY`，否则容器重建后无法解密 |
+| 文件导入 | `Dialogs.OpenFile` 取本机绝对路径 | 浏览器选文件 → 上传 → 当前用户私有目录 |
+| 导出下载 | Blob / 本地路径 | 前端 Blob（不变） |
+| 事件推送 | Wails 事件总线 | SSE Hub，按用户隔离 |
+| 查询取消 | `CancellablePromise` | 不传播 HTTP 断连；仍由连接配置的查询超时兜底 |
+| 鉴权 | 操作系统桌面会话 | 用户注册/登录 + 会话 cookie（见第 6 章） |
+| 并发 | 单用户 | 每用户独立 `app.App`；同一用户多标签页由其实例内部 `Mutex` 串行化 |
+
+**边界**：B/S 模式提供多用户数据隔离，但不做角色/RBAC；公网部署仍建议置于反向代理 / VPN 之后。
+
+### 5.6 安全设计
+
+1. `DB_FLY_WEB_ADDR` 默认 `127.0.0.1:8080`；非回环地址且未提供注册邀请码时，进程自动生成并输出到日志。
+2. 用户账号采用 bcrypt 哈希 + 随机会话 token + HttpOnly / SameSite=Lax cookie；详见第 6 章。
+3. 上传文件名 `path.Base` 清洗、随机 ID 重命名、扩展名白名单、体积上限；RPC 请求体也有限制；上传路径按用户目录隔离。
+4. 静态资源由 `embed.FS` 提供，`index.html` 禁用缓存，避免目录穿越与旧产物缓存。
+5. 容器以非 root 用户运行，`/data` 挂卷持久化 `users.json` 与 `users/<id>/` 全部数据。
+
+### 5.7 环境变量与部署
+
+| 变量 | 默认值 | 用途 |
+| --- | --- | --- |
+| `DB_FLY_WEB_ADDR` | `127.0.0.1:8080`（镜像内 `:8080`） | HTTP 监听地址 |
+| `DB_FLY_WEB_TOKEN` | 空 | 注册邀请码（可选）；见第 6 章 |
+| `DB_FLY_ALLOW_SIGNUP` | `true` | 是否开放注册 |
+| `DB_FLY_DATA_DIR` | `~/.db-fly`（镜像内 `/data`） | 账号表与各用户数据根目录 |
+| `DB_FLY_MASTER_KEY` | 空（回退机器派生值） | 非 Windows 凭证加密主密钥，容器必须固定 |
+| `DB_FLY_UPLOAD_DIR` | 各用户目录内 `uploads/` | 导入文件暂存目录覆盖（可选） |
+
+`Dockerfile` 采用三阶段：Node 构建 `dist-web` → Go 交叉编译（含前端 embed）→ 精简运行镜像（CA 证书 + 时区 + 非 root 用户 + HEALTHCHECK + `/data` 卷）。`.dockerignore` 排除 `node_modules` / `dist*` / `.git` 等，避免构建上下文膨胀。
+
+---
+
+## 6. Web 多用户与数据隔离设计
+
+### 6.1 目标
+
+Web 模式支持用户注册、登录、登出；每个用户的连接配置、数据库密码、收藏、查询历史、偏好、审计日志、导入文件与数据库会话完全隔离。GUI 本地模式与 CLI 保持原样，仍使用根目录的单用户数据。
+
+### 6.2 目录与所有权
+
+```
+<DB_FLY_DATA_DIR>/
+├── users.json                  # 0600，账号表（id / 用户名 / bcrypt 哈希 / 创建时间）
+└── users/<随机 hex ID>/
+    ├── config.json             # 连接、收藏、历史、偏好
+    ├── secrets.json            # 该用户数据库密码
+    ├── credential.salt         # 非 Windows 凭证盐值
+    ├── audit.log               # 该用户审计日志
+    └── uploads/                # 该用户导入文件暂存
+```
+
+- 用户 ID 由 `crypto/rand` 生成，目录名与用户名无关，杜绝路径穿越。
+- 用户名仅允许 3–32 位 `[A-Za-z0-9_-]`，全局唯一（大小写不敏感）。
+- 每个用户目录 `0700`，账号文件 `0600`，写入采用临时文件 + 原子替换。
+
+### 6.3 运行时模型
+
+```mermaid
+graph TD
+    REQ["HTTP 请求 + 会话 cookie"] --> MW["withUser 中间件<br/>解析会话 → 用户"]
+    MW --> MGR["internal/auth.Manager<br/>懒加载用户运行时"]
+    MGR --> RT["bootstrap.Runtime(userDir)<br/>独立 config/credential/audit/app.App"]
+    RT --> BR["bridge.New(rt.App, ...)<br/>43 个门面方法"]
+    MGR --> USERS["users.json (bcrypt)"]
+    MGR --> SESS["内存会话表 token→userID (12h)"]
+    MW -->|未登录| LOGIN["/login 注册/登录页"]
+    MW -->|未登录的 API| E401["401 unauthorized"]
+    RT --> EVT["per-user SSE emitter"]
+```
+
+`app.New` 只依赖注入的 `config.Store` / `credential.Store` / `audit.Logger`，因此**业务用例层零改动**即可获得多租户能力；每个用户的数据库会话池也随独立 `app.App` 隔离。
+
+### 6.4 接口与交互
+
+| 端点 | 说明 |
+| --- | --- |
+| `POST /api/auth/register` | `{username,password,invite?}` → 创建账号与用户目录，返回 `me` |
+| `POST /api/auth/login` | `{username,password}` → 校验 bcrypt，下发 HttpOnly 会话 cookie |
+| `POST /api/auth/logout` | 删除服务端会话与 cookie |
+| `GET /api/auth/me` | 返回 `{id,username,created_at}` |
+| `GET /login` | 服务端极简注册/登录页（表单），登录成功跳回 `next` |
+| `POST /login`、`POST /logout` | 表单兼容入口，行为同上 |
+
+- 中间件：静态资源（`/assets/*`、`/logo.png`、`favicon`）与 `/api/health` 公开；`/login`、`/api/auth/*` 公开；其余请求必须携带有效会话，API 返回 401、页面 302 到 `/login`。
+- 前端 `runtime/web.ts` 在收到 401 时跳转 `/login?next=...`；状态栏显示当前用户并提供退出按钮；GUI 模板的对应接口为空实现，编译期隔离。
+- `handleRPC` / `handleUpload` 从 `request.Context()` 取当前用户运行时：Bridge、上传目录、SSE 发射器全部按请求所属用户构造。
+- `ImportFile` 的 `path` 白名单改为「当前用户 uploads 目录」，用户无法引用其他用户的上传文件。
+
+### 6.5 安全设计
+
+1. 密码使用 bcrypt（自适应成本）；登录失败统一为「用户名或密码错误」，不泄露账号是否存在。
+2. 会话 token 32 字节随机值，仅存内存，12 小时过期，登出立即失效；cookie HttpOnly + SameSite=Lax，TLS 下附加 Secure。服务重启后需重新登录。
+3. 注册邀请码（`DB_FLY_WEB_TOKEN`）常量时间比较；`DB_FLY_ALLOW_SIGNUP=false` 可完全关闭注册（适用于已创建账号后的生产环境）。
+4. `DB_FLY_WEB_TOKEN` 语义由「网关令牌」调整为「注册邀请码」：账号系统成为唯一鉴权；公网防护由反向代理 / VPN 承担。
+5. SSE 事件按用户分发，避免 `query:started` 中的连接名跨用户泄露。
+6. 前端 `localStorage` 只保存主题与布局等 UI 偏好，不含连接/收藏等业务数据。
+
+### 6.6 兼容与边界
+
+- GUI 本地模式、CLI 与 `bootstrap.New("")` 行为不变，仍读写根目录 `config.json` / `secrets.json`。
+- Web 旧版根目录数据**不自动迁移**；如需沿用，可手动把 `config.json` / `secrets.json` / `credential.salt` 复制到 `users/<id>/`（同一 Windows 用户或相同 `DB_FLY_MASTER_KEY` 下可解密）。
+- 不做角色/RBAC、不做密码找回、不做会话持久化；每用户数据量与连接数无独立配额。
+- 同一用户多标签页共享一份 `app.App` 与上传目录，由 `app.App` 内部锁串行化配置读写。

@@ -1,10 +1,11 @@
-// Package bridge 把业务内核（internal/app）以 wails 服务的形式暴露给 Vue 前端。
+// Package bridge 把业务内核（internal/app）以 JSON 门面方法的形式暴露给 Vue 前端。
 //
 // 设计原则：
-//   - 本包不依赖 wails/WebView，保持纯 Go，便于在无 CGO 环境下编译校验；
-//     仅 cmd/db-fly-gui 的入口文件引入 wails 并负责把 Bridge 注册为服务、注入事件发射器。
+//   - 本包在任意平台都保持纯 Go：Wails 服务注册只在 service_windows.go（GUI 模式）中，
+//     B/S 模式由 internal/httpapi 通过反射分发调用同一组方法，两者共用同一套 DTO。
 //   - 所有方法签名只使用 JSON 可序列化的参数与返回值，首参不暴露 Go 的 context.Context，
-//     由方法内部构造 context；错误统一以 (T, error) 形式返回，由 wails 转成 Promise 的 reject。
+//     由方法内部构造 context；错误统一以 (T, error) 形式返回，由 wails 转成 Promise 的
+//     reject，或由 HTTP 层转成结构化错误响应。
 //   - 按业务模块分文件组织方法：连接 / 元数据 / 查询 / 结构 / 数据 / 导入 / 历史收藏。
 package bridge
 
@@ -24,8 +25,9 @@ type EventEmitter interface {
 // Version 由构建脚本经 -ldflags "-X .../internal/bridge.Version=..." 注入。
 var Version = "dev"
 
-// 事件发射器以包级变量注入（由 wails 入口在创建应用后调用 SetDefaultEmitter）。
-// 使用包级变量而非 Bridge 的导出方法，是为了避免把不可序列化的注入接口暴露给前端绑定生成器。
+// 事件发射器默认以包级变量注入（由 wails 入口在创建应用后调用 SetDefaultEmitter）。
+// B/S 模式通过 WithEmitter 给每次请求绑定按用户隔离的发射器，优先于全局默认值。
+// 使用包级变量/函数而非 Bridge 的导出方法，是为了避免把注入接口暴露给前端绑定生成器。
 var defaultEmitter EventEmitter
 
 // SetDefaultEmitter 设置全局事件发射器；必须在应用启动前调用一次。
@@ -39,6 +41,15 @@ type Bridge struct {
 	version     string
 	dataDir     string
 	secretsName string
+	emitter     EventEmitter
+}
+
+// WithEmitter 返回绑定了指定事件发射器的 Bridge 副本。
+// 包级函数不会成为 wails 服务方法；B/S 模式用它把事件按用户分发。
+func WithEmitter(b *Bridge, e EventEmitter) *Bridge {
+	clone := *b
+	clone.emitter = e
+	return &clone
 }
 
 // newBridge 创建 Bridge，运行时信息由 setRuntimeInfo 注入。
@@ -60,8 +71,12 @@ func (b *Bridge) setRuntimeInfo(version, dataDir, secretsName string) {
 }
 
 func (b *Bridge) emit(name string, data ...any) {
-	if defaultEmitter != nil {
-		defaultEmitter.Emit(name, data...)
+	e := b.emitter
+	if e == nil {
+		e = defaultEmitter
+	}
+	if e != nil {
+		e.Emit(name, data...)
 	}
 }
 

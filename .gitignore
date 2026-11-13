@@ -1,4 +1,8 @@
 dist/
+frontend/dist-web/
+# Go embed 目录必须随仓库保留（占位页或 Web 构建产物），否则 go build 会失败
+!internal/webui/dist/
+!internal/webui/dist/**
 node_modules/
 *.exe
 *.test

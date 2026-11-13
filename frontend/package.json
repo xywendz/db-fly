@@ -4,10 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "dev": "vite --mode gui",
+    "dev:web": "vite --mode web",
+    "build": "vite build --mode gui",
+    "build:gui": "vite build --mode gui",
+    "build:web": "vite build --mode web",
     "typecheck": "vue-tsc --noEmit",
-    "preview": "vite preview",
+    "preview": "vite preview --mode gui",
+    "preview:web": "vite preview --mode web",
     "generate:bindings": "wails3 generate bindings -names -i -d ./src/bindings ./internal/bridge"
   },
   "dependencies": {
@@ -16,6 +20,7 @@
     "vue": "^3.4.0"
   },
   "devDependencies": {
+    "@types/node": "^22.20.5",
     "@vitejs/plugin-vue": "^5.0.0",
     "typescript": "^5.4.0",
     "vite": "^5.2.0",

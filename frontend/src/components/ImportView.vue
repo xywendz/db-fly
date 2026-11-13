@@ -5,7 +5,7 @@ import * as api from "@/api/client";
 import type { ImportOutcomeDTO } from "@/types/domain";
 import Icon from "./ui/Icon.vue";
 import EmptyState from "./ui/EmptyState.vue";
-import { Dialogs } from "@wailsio/runtime";
+import { pickImportFile, runtimeMode } from "@/runtime";
 
 const props = defineProps<{ tab: Tab }>();
 const store = useWorkspace();
@@ -48,28 +48,25 @@ const tables = computed(() =>
 const needHeader = computed(() => format.value === "csv" || format.value === "tsv" || format.value === "xlsx");
 const formatLabel = computed(() => FORMATS.find((f) => f.value === format.value)?.label ?? format.value);
 
-// 使用 Wails 原生文件对话框：可直接拿到文件的真实绝对路径，无需用户手动粘贴。
+// GUI 模式走 Wails 原生文件对话框；Web 模式走浏览器选文件 + /api/upload 上传。
 async function pickFile() {
-  const filters = [{ DisplayName: "支持的导入文件", Pattern: "*.csv;*.tsv;*.txt;*.sql;*.xlsx;*.xlsm;*.json;*.jsonl;*.ndjson" }];
-  let result: string | string[];
+  error.value = "";
   try {
-    result = await Dialogs.OpenFile({ Title: "选择要导入的文件", Filters: filters, CanChooseFiles: true });
-  } catch {
-    return;
+    const picked = await pickImportFile();
+    if (!picked) return;
+    path.value = picked.path;
+    pickedName.value = picked.name;
+    const lower = picked.name.toLowerCase();
+    const detected =
+      lower.endsWith(".tsv") ? "tsv" :
+      lower.endsWith(".sql") ? "sql" :
+      lower.endsWith(".xlsx") || lower.endsWith(".xlsm") ? "xlsx" :
+      lower.endsWith(".json") || lower.endsWith(".ndjson") ? "json" :
+      lower.endsWith(".csv") ? "csv" : "";
+    if (detected) format.value = detected;
+  } catch (e: any) {
+    error.value = e?.message ?? String(e);
   }
-  if (!result) return;
-  const p = (Array.isArray(result) ? result[0] : result) || "";
-  if (!p) return;
-  path.value = p;
-  pickedName.value = p.split(/[\\/]/).pop() || p;
-  const lower = p.toLowerCase();
-  const detected =
-    lower.endsWith(".tsv") ? "tsv" :
-    lower.endsWith(".sql") ? "sql" :
-    lower.endsWith(".xlsx") || lower.endsWith(".xlsm") ? "xlsx" :
-    lower.endsWith(".json") || lower.endsWith(".ndjson") ? "json" :
-    lower.endsWith(".csv") ? "csv" : "";
-  if (detected) format.value = detected;
 }
 
 function next() {
@@ -82,7 +79,7 @@ function next() {
       if (!tableName.value.trim()) { error.value = "请填写目标表"; return; }
     }
   } else if (step.value === 2) {
-    if (!path.value.trim()) { error.value = "请填写要导入的文件完整路径"; return; }
+    if (!path.value.trim()) { error.value = "请先选择要导入的文件"; return; }
   }
   step.value = Math.min(4, step.value + 1);
 }
@@ -92,7 +89,7 @@ function goto(n: number) { if (n <= step.value) { step.value = n; error.value = 
 // dry=true 进入「预览」模式（只生成预览，不写库）；dry=false 执行「导入数据」（真实写入）。
 async function run(dry: boolean) {
   error.value = "";
-  if (!path.value.trim()) { error.value = "请填写要导入的文件完整路径"; step.value = 2; return; }
+  if (!path.value.trim()) { error.value = "请先选择要导入的文件"; step.value = 2; return; }
   dryRun.value = dry;
   busy.value = true;
   result.value = null;
@@ -205,12 +202,19 @@ function restart() {
               </span>
             </button>
             <div class="field">
-              <label class="field-label">文件绝对路径 *</label>
+              <label class="field-label">{{ runtimeMode === "web" ? "服务端临时文件路径 *" : "文件绝对路径 *" }}</label>
               <div class="row" style="gap: 6px">
                 <Icon name="file" :size="15" class="dim" />
-                <input v-model="path" class="grow mono" placeholder="D:\data\users.csv" />
+                <input
+                  v-model="path"
+                  class="grow mono"
+                  :readonly="runtimeMode === 'web'"
+                  :placeholder="runtimeMode === 'web' ? '请点击上方按钮上传文件' : 'D:\\data\\users.csv'"
+                />
               </div>
-              <span class="field-hint">已通过系统文件对话框选择，路径会自动填入；如需也可手动粘贴完整路径。</span>
+              <span class="field-hint">{{ runtimeMode === "web"
+                ? "文件已上传到服务端临时目录，重新选择即可替换；关闭服务后自动清理。"
+                : "已通过系统文件对话框选择，路径会自动填入；如需也可手动粘贴完整路径。" }}</span>
             </div>
           </div>
         </div>
