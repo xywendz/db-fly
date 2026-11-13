@@ -1,0 +1,17 @@
+{
+  "$schema": "https://wails.io/schemas/config.v3.json",
+  "name": "db-fly",
+  "frontend": {
+    "dir": "frontend",
+    "install": "npm install",
+    "build": "npm run build",
+    "dev": "npm run dev",
+    "serve": "http://localhost:34115",
+    "port": 34115
+  },
+  "assetdir": "cmd/db-fly-gui/assets",
+  "build": {
+    "outputfilename": "db-fly-gui.exe",
+    "ldflags": "-X github.com/db-fly/db-fly/internal/bridge.Version=dev"
+  }
+}

@@ -22,9 +22,12 @@ type Preferences struct {
 }
 
 // SavedQuery 是收藏的查询脚本。Language/Collection 让收藏可跨 SQL 与 MongoDB 复用。
+// Folder 支持目录分组；Kind 标注数据库类型（mysql/redis 等），便于直观区分。
 type SavedQuery struct {
 	ID         string    `json:"id"`
 	Name       string    `json:"name"`
+	Folder     string    `json:"folder,omitempty"`
+	Kind       string    `json:"kind,omitempty"`
 	Connection string    `json:"connection,omitempty"`
 	Database   string    `json:"database,omitempty"`
 	Collection string    `json:"collection,omitempty"`
@@ -190,10 +193,11 @@ func RemoveConnection(cfg *Config, id string) bool {
 	return false
 }
 
-// UpsertSavedQuery 按 ID 或名称新增/更新收藏，名称唯一。
+// UpsertSavedQuery 按 ID 或（目录+名称）新增/更新收藏，目录内名称唯一。
 func UpsertSavedQuery(cfg *Config, q SavedQuery) {
 	for i := range cfg.SavedQueries {
-		if cfg.SavedQueries[i].ID == q.ID || cfg.SavedQueries[i].Name == q.Name {
+		if cfg.SavedQueries[i].ID == q.ID ||
+			(cfg.SavedQueries[i].Folder == q.Folder && cfg.SavedQueries[i].Name == q.Name) {
 			cfg.SavedQueries[i] = q
 			return
 		}

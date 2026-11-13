@@ -204,6 +204,15 @@ func (r ObjectRef) String() string {
 	return r.Name
 }
 
+// CopyTableRequest 复制表结构 / 结构+数据的请求参数。
+// 将 ref / newName / withData 打包为单一结构体，避免 Wails 在多参数序列化时
+// 丢弃位于结构体参数之后的基础类型参数（withData 布尔值）。
+type CopyTableRequest struct {
+	Ref      ObjectRef `json:"ref"`
+	NewName  string    `json:"new_name"`
+	WithData bool      `json:"with_data"`
+}
+
 // ColumnInfo 描述表的一个字段（来自元数据查询）。
 type ColumnInfo struct {
 	Position      int    `json:"position"`

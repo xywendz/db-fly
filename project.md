@@ -1,7 +1,7 @@
 # db-fly 项目设计说明
 
 > 本文档描述 db-fly 的**业务设计**、**架构设计**与**构建命令**，与当前代码库实现保持一致。
-> 模块路径：`github.com/db-fly/db-fly`；Go 版本：`go 1.25.0`（见 `go.mod`）。
+> 模块路径：`github.com/db-fly/db-fly`；Go 版本：`go 1.26.0`（见 `go.mod`）。
 
 ---
 
@@ -13,7 +13,7 @@ db-fly 是一个**模块化、多数据库、跨平台**的数据库客户端：
 
 | 形态 | 平台 | 入口 | 说明 |
 | --- | --- | --- | --- |
-| 桌面 GUI | Windows（CGO） | `cmd/db-fly-gui` | Fyne 桌面应用：连接树、结构浏览、SQL 查询、结果网格、数据编辑 |
+| 桌面 GUI | Windows（纯 Go wails3 + WebView2） | `cmd/db-fly-gui` + `frontend/` | wails3 + Vue3 桌面应用：连接树、结构浏览、SQL 查询、结果网格、数据编辑 |
 | 命令行 CLI | Linux / Windows（纯 Go） | `cmd/dbctl` | 连接管理、查询、DDL、导入导出、REPL、历史/收藏 |
 
 两种形态**共用同一套业务内核**（`internal/app`）与**同一份本地配置**，因此连接定义、收藏、查询历史、偏好设置在 GUI 与 CLI 之间共享。
@@ -157,7 +157,8 @@ CLI / GUI → app.Execute / Explain / ExecStatement
 
 ```mermaid
 graph TD
-    GUI["internal/gui<br/>Windows Fyne GUI"] --> APP
+    GUI["frontend/ (Vue3)<br/>wails3 桌面 UI"] -->|wails 绑定| BRIDGE
+    BRIDGE["internal/bridge<br/>wails 服务层"] --> APP
     CLI["internal/cli<br/>Cobra CLI"] --> APP
     APP["internal/app<br/>业务用例层"] --> DOMAIN
     APP --> PLATFORM
@@ -189,13 +190,23 @@ graph TD
 
 ```
 db-fly/
+├── logo.png                        # 应用图标唯一来源（生成 .ico / .syso / 前端 favicon）
+├── Taskfile.yml                    # wails3 build/package 的任务入口（转发到 build/gui.ps1）
+├── build/
+│   ├── gui.ps1                     # Windows GUI 一键构建（前端 + 图标 + 纯 Go 编译）
+│   └── windows/
+│       ├── icon.ico                # 由 logo.png 生成的多尺寸 Windows 图标
+│       ├── wails.exe.manifest      # DPI/Common-Controls 清单
+│       └── info.json               # exe 版本信息
+├── frontend/public/logo.png        # 窗口内 favicon（logo.png 的副本）
 ├── cmd/
 │   ├── dbctl/main.go               # CLI 入口（纯 Go，可 CGO_ENABLED=0）
 │   └── db-fly-gui/
-│       ├── main_windows.go         # //go:build windows && cgo
-│       ├── main_stub.go            # //go:build !windows || !cgo
-│       ├── notify_windows.go       # //go:build windows，MessageBox + 启动日志
-│       └── notify_other.go         # //go:build !windows
+│       ├── main.go                 # //go:build windows，wails3 入口（纯 Go，嵌入前端、注册 Bridge 服务）
+│       ├── stub.go                 # //go:build !windows，非 Windows 平台占位入口
+│       ├── icon.png                # logo.png 副本，//go:embed 供 Options.Icon（Linux/macOS）
+│       ├── rsrc_windows_*.syso     # 由 wails3 generate syso 生成，链接进 exe 作为文件/任务栏图标
+│       └── assets/                 # 由 build/gui.ps1 从 frontend/dist 复制的 Vue 构建产物（//go:embed all:assets）
 ├── internal/
 │   ├── domain/
 │   │   ├── entity.go               # Kind / Capability / 实体与值对象
@@ -211,9 +222,9 @@ db-fly/
 │   │   ├── history.go              # 查询历史、收藏、偏好
 │   │   └── import.go               # SQL/CSV/TSV/XLSX/JSON 导入
 │   ├── cli/                        # Cobra 命令（10 个 .go）
-│   ├── gui/                        # Fyne 桌面：workspace 类别分派、多文档页签、业务视图
-│   │   ├── components/            # 与数据库业务无关的公共 UI 组件（网格/列解析/内联编辑/TabStrip）
-│   │   ├── workspace_*.go         # 关系型 / 文档型 / 键值型各自的布局与菜单实现
+│   ├── bridge/                     # wails 服务层：把 app.App 暴露给 Vue 前端（纯 Go，按模块分文件）
+│   │   ├── bridge.go / register.go # Bridge 聚合与 wails 服务注册
+│   │   ├── connections.go / metadata.go / query.go / schema.go / data.go / import.go / history.go
 │   ├── platform/
 │   │   ├── config/                 # config.json 读写、收藏与历史持久化
 │   │   ├── credential/             # DPAPI / AES-GCM 凭证库
@@ -225,8 +236,8 @@ db-fly/
 │       ├── mysql/  mssql/  mongo/  # 三个垂直业务模块
 ├── build/
 │   ├── cli.sh                      # CLI 构建（Linux/Windows 交叉编译）
-│   ├── gui.ps1                     # Windows GUI 构建（需 gcc）
-│   └── verify.ps1                  # 一键校验（无需 gcc）
+│   ├── gui.ps1                     # Windows GUI 构建（纯 Go，无需 gcc）
+│   └── verify.ps1                  # 一键校验
 ├── go.mod / go.sum
 └── project.md                      # 本文档
 ```
@@ -271,10 +282,10 @@ db-fly/
 
 ### 2.6 结果流与表现层
 
-- `app.ResultSink`：`OnResultStart(index, cols)` / `OnRows(index, rows)` / `OnFinish(outcome)`；CLI 用 `CollectSink` 累积，GUI 用 `gridSink` 经 `fyne.Do` 切回 UI 线程分批刷新。
+- `app.ResultSink`：`OnResultStart(index, cols)` / `OnRows(index, rows)` / `OnFinish(outcome)`；CLI 与 bridge 均复用 `app.CollectSink` 累积为 `QueryOutcome`，Vue 前端经 wails 绑定以 Promise 一次性取回（默认上限 1000 行）。
 - `consumeResult` 循环 `NextResultSet()` 生成多个 `ResultPage`，每批 200 行推送，施加 `MaxRows` 并标记 `Truncated`；同时收集 `ResultSet.Document()` 为 `JSONDocuments`。
-- GUI `resultGrid` 为每个结果集生成一个 `container.AppTabs` 页签，含 BSON 文档的结果集额外生成 `widget.Tree` JSON 树页签。
-- GUI 采用**类似 provider 的分层**：`internal/gui/components` 放与数据库业务无关的公共组件（单元格/列宽与类型解析/内联编辑单元/多文档 `TabStrip`）；`workspace` 接口 + `workspaces` 注册表按 `CapabilitySet` 推导的类别分派，三个实现分别在 `workspace_relational.go` / `workspace_document.go` / `workspace_keyvalue.go`，各自负责表页签内部布局（`TableParts`）、查询页签标题、对象/库/连接右键菜单、单击/双击与新建对象行为。主壳不做 `Kind` 分支。
+- Vue 前端 `frontend/src/components/ResultGrid.vue` 为每个结果集渲染一张表；含 JSON 文档的结果集可切换到 JSON 树视图。
+- 前端采用**按模块分层**：`internal/bridge` 把 `app.App` 的各用例按模块（连接/元数据/查询/结构/数据/导入/历史收藏）封装为 wails 服务；`frontend/src/components` 放与数据库业务无关的公共组件（结果网格/连接树/查询编辑器/内联编辑单元/多文档页签）；`frontend/src/stores/workspace.ts` 维护连接、树缓存与打开的页签，UI 通过 `CapabilitySet` 动态生成菜单，主壳不做 `Kind` 分支。
 - GUI 是**多文档工作区**：每张表、每个查询、每个新建表设计器各占一个可关闭页签（`TabStrip` 支持 ID 去重、激活与关闭）；切换页签同步面包屑与类别。左侧树**单击只选中节点**（更新面包屑/右键动作目标），**双击为该表打开独立页签**，`conn+db+table` 相同则只激活不重复创建；右键菜单由对应类别的 workspace 生成（关系型含打开表数据、修改表名、导出数据、TRUNCATE、清空数据、修改表结构、删除表）。
 - 查询页签参考 Navicat 查询编辑器：第一行文档工具（保存 / 格式化 SQL / 查询模板 / 代码片段 / 导出 / 新查询），第二行连接 / 数据库 / 语言 / 集合 + `▶ 执行 / 停止 / 执行计划`，编辑区带行号槽，下方为多结果集网格。表页签顶部为对象信息与刷新工具，内部由 workspace 决定子页签（关系型/文档型为「数据 + 结构」，键值型为「键浏览」）。
 - 全局外壳：精简主工具栏（只保留连接管理 / 刷新 / 主题）、左侧导航树带节点过滤搜索、右上方「连接 › 库 › 表」面包屑与数据库类别标识、底部状态栏。数据库级功能（新建库、修改库、新建表/集合/键、刷新、查看库结构）全部下沉到数据库节点右键；新建数据库同时出现在连接节点右键。
@@ -304,30 +315,28 @@ db-fly/
 
 | 文件 | 构建标签 | 作用 |
 | --- | --- | --- |
-| `internal/gui/*.go`、`internal/gui/components/*.go`（`stub.go` 除外） | `//go:build windows && cgo` | 真实 Fyne GUI 与公共 UI 组件 |
-| `internal/gui/stub.go` | `//go:build !windows \|\| !cgo` | 无 GUI 环境下 `Run()` 返回提示错误 |
-| `cmd/db-fly-gui/main_windows.go` | `//go:build windows && cgo` | GUI 入口 |
-| `cmd/db-fly-gui/main_stub.go` | `//go:build !windows \|\| !cgo` | 占位入口（Windows 下弹窗提示需要 CGO/gcc） |
-| `cmd/db-fly-gui/notify_windows.go` | `//go:build windows` | 无控制台时 MessageBox 提示、启动日志与 panic 兜底 |
-| `cmd/db-fly-gui/notify_other.go` | `//go:build !windows` | 非 Windows 空实现 |
+| `internal/bridge/*.go` | 无（纯 Go） | wails 服务层，把 `app.App` 暴露给前端 |
+| `cmd/db-fly-gui/main.go` | `//go:build windows` | wails3 入口：构建 `app.App`、注册 Bridge 服务、嵌入 `assets/`；Windows 下纯 Go 编译，不需要 CGO |
+| `cmd/db-fly-gui/stub.go` | `//go:build !windows` | 非 Windows 平台占位入口（打印提示并退出） |
 | `internal/provider/mysql/integration_test.go` | `//go:build integration` | 需真实 MySQL 的集成测试 |
 
-CLI 与全部非 GUI 代码均为纯 Go，可在 Linux 下 `CGO_ENABLED=0` 静态编译。无 gcc 的 Windows 环境通过 `go build -tags "ci cgo" ./...` 使用 Fyne 的 `ci`（headless）标签仅做 GUI 类型检查，不产出可执行 GUI。
+CLI、`internal/bridge` 与 Windows GUI 入口均为纯 Go：`CGO_ENABLED=0` 即可编译，Windows 上无需 mingw-w64 gcc；非 Windows 平台 `go build ./...` 会编译 `stub.go`，保证全量构建与单测通过。
 
 ### 2.10 直接依赖
 
 | 依赖 | 版本 | 用途 |
 | --- | --- | --- |
-| `fyne.io/fyne/v2` | v2.6.3 | Windows GUI |
+| `github.com/wailsapp/wails/v3` | v3.0.0 | 桌面 GUI 运行时（纯 Go / WebView2） |
 | `github.com/spf13/cobra` | v1.10.2 | CLI 命令树 |
 | `github.com/go-sql-driver/mysql` | v1.10.1 | MySQL 驱动 |
 | `github.com/microsoft/go-mssqldb` | v1.11.2 | SQL Server 驱动 |
 | `go.mongodb.org/mongo-driver/v2` | v2.10.0 | MongoDB 驱动 |
 | `github.com/jackc/pgx/v5` | v5.7.6 | PostgreSQL 驱动（纯 Go，无 CGO） |
 | `github.com/sijms/go-ora/v2` | v2.9.0 | Oracle 驱动（纯 Go，无需 Instant Client） |
-| `modernc.org/sqlite` | v1.38.2 | SQLite 驱动（纯 Go，无 CGO） |
+| `modernc.org/sqlite` | v1.44.3 | SQLite 驱动（纯 Go，无 CGO） |
 | `github.com/redis/go-redis/v9` | v9.14.0 | Redis 客户端 |
 | `github.com/xuri/excelize/v2` | v2.9.1 | Excel 导入 |
+| 前端：`vue` / `pinia` / `vite` / `@wailsio/runtime` | Vue 3 工具链 | `frontend/` 桌面 UI |
 
 ---
 
@@ -339,15 +348,42 @@ CLI 与全部非 GUI 代码均为纯 Go，可在 Linux 下 `CGO_ENABLED=0` 静�
 
 | 目标 | 要求 |
 | --- | --- |
-| 全部 | Go 1.25.0+ |
-| CLI | 无额外依赖（纯 Go，`CGO_ENABLED=0`） |
-| GUI 可执行文件 | Windows + mingw-w64 gcc（Fyne 需要 CGO / OpenGL 工具链） |
-| 一键校验 | 无需 gcc，PowerShell（Windows） |
+| 全部 | Go 1.26.0+ |
+| CLI | 纯 Go，`CGO_ENABLED=0` |
+| GUI 可执行文件 | Windows + Node 20+ / npm + `wails3` CLI（生成图标资源）+ WebView2 Runtime；wails3 v3 的 Windows 后端是纯 Go，**不需要 mingw-w64 gcc / CGO** |
+| 一键校验 | PowerShell（Windows），无需 gcc |
 
-### 3.2 一键校验（推荐，无需 gcc）
+#### 3.1.1 构建 exe 的环境准备
+
+| 组件 | 版本 / 安装方式 | 用途 |
+| --- | --- | --- |
+| Go | 1.26.0+，`go version` | 编译后端（纯 Go） |
+| Node.js / npm | 20+，`node -v && npm -v` | 构建 Vue 前端 |
+| wails3 CLI | `go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0` | `generate icons` / `generate syso`；`wails3 build` 的任务运行时 |
+| Taskfile.yml | 仓库根目录已提供 | `wails3 build` / `wails3 package` 的任务定义（go-task） |
+| WebView2 Runtime | Windows 11 自带；Windows 10 需安装「Microsoft Edge WebView2 Runtime」 | 运行时渲染窗口 |
+
+一次性安装与自检（PowerShell）：
 
 ```powershell
-# Windows PowerShell
+# 1) 安装 wails3 CLI（安装后确认 $env:GOPATH\bin 在 PATH 中）
+go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
+wails3 version
+
+# 2) 逐项自检
+go version
+node -v
+npm -v
+Get-Command wails3, npm | Select-Object Name, Source
+Test-Path ./Taskfile.yml                # wails3 build 必需，应为 True
+wails3 task -list                        # 应列出 build / default / package / verify
+```
+
+> Wails v3 官方的 Windows 构建默认就是 `CGO_ENABLED=0`（见 `internal/commands/build_assets/windows/Taskfile.yml`），`pkg/application` 的 Windows 实现也没有 `import "C"`；本项目依赖同样全是纯 Go，因此 **不需要安装 mingw-w64 gcc**。`main.go` 使用 `//go:build windows`，`stub.go` 只在非 Windows 生效；`build/gui.ps1` 显式设置 `CGO_ENABLED=0`，并在构建后用 `go version -m` 校验产物含 `github.com/wailsapp/wails/v3` 依赖，避免把占位入口误链进 exe。
+
+### 3.2 一键校验（推荐）
+
+```powershell
 ./build/verify.ps1
 ```
 
@@ -355,14 +391,14 @@ CLI 与全部非 GUI 代码均为纯 Go，可在 Linux 下 `CGO_ENABLED=0` 静�
 
 ```powershell
 $env:CGO_ENABLED = "0"
-gofmt -l ./cmd ./internal                 # 输出为空即通过
-go build ./...                            # 默认构建（不含 GUI 实现）
-go build -tags "ci cgo" ./...             # GUI 无头类型检查
+gofmt -l ./cmd/db-fly-gui ./internal/bridge   # 输出为空即通过
+go build ./...                                # 全量构建（Windows 下编译真实 GUI 入口）
 go vet ./...
 go test ./...
+cd frontend; npm install; npm run typecheck; npm run build; cd ..
 ```
 
-> `gofmt` 只检查 `./cmd ./internal`，避免扫描 IDE 生成的 `pkg/` 模块缓存副本。
+> `gofmt` 只校验 wails3 重构新增的代码；CLI / provider 的历史格式差异保持原样。
 
 ### 3.3 构建 CLI
 
@@ -400,25 +436,82 @@ go build ./...
 
 ### 3.4 构建 Windows GUI
 
+**主命令（推荐，一步产出带图标的 exe）**
+
 ```powershell
 ./build/gui.ps1
+# → dist/db-fly-gui.exe
 ```
 
-脚本会自动探测 `gcc`（PATH 或 MSYS2 / TDM-GCC / scoop 常见安装路径）、强制 `CGO_ENABLED=1`，并在构建后用 `go version -m` 校验产物确实含 `CGO_ENABLED=1`；不满足时删除产物并报错，避免生成双击无反应的占位程序。
-
-手动直接构建时**必须先设置 CGO 环境**，否则 `cmd/db-fly-gui/main_stub.go` 会被编译进去：
+**等价的 wails3 CLI 入口**
 
 ```powershell
-$env:CGO_ENABLED = "1"
-$env:PATH = "C:\msys64\ucrt64\bin;$env:PATH"   # mingw-w64 gcc 所在目录
-go build -trimpath -ldflags "-s -w -H windowsgui" -o dist/db-fly-gui.exe ./cmd/db-fly-gui
+wails3 build
+# → 同样产出 dist/db-fly-gui.exe
 ```
 
-> `go env CGO_ENABLED` 在没有 C 编译器时默认为 `0`：真实 GUI 文件（`windows && cgo`）被排除，产物只是打印一行提示就退出的占位程序；`-H windowsgui` 又不分配控制台，因此双击表现为「打不开」。
-> `-X ...internal/cli.Version` 只适用于 `dbctl`（GUI 未链接 `internal/cli`，注入会被链接器忽略），GUI 构建不需要该参数；版本注入见 `build/cli.sh`。
-> `-H windowsgui` 使 GUI 程序不弹出控制台窗口；启动错误由 `cmd/db-fly-gui/notify_windows.go` 写入 `%TEMP%\db-fly\gui-startup.log` 并通过 MessageBox 提示。若需要带图标的安装包，可用 `fyne package` 进一步打包。
-> 无 gcc 时只能执行 `go build -tags "ci cgo" ./...` 做类型检查，不能产出 `db-fly-gui.exe`。
-> 用其他 gcc 构建时若双击报缺少 `libwinpthread-1.dll` 等依赖，可把该 DLL 复制到 `dist/`，或追加 `-ldflags "-linkmode external -extldflags=-static"` 静态链接。
+> **为什么原先报 `ERROR task: No Taskfile found at "D:\doit\db-fly"`**：Wails v3 的 `build` / `package` / `sign` 不是直接调 `go build`，而是在内部转成 `wails3 task build GOOS=windows ARCH=amd64`，由根目录的 `Taskfile.yml`（go-task）驱动。项目原先没有这个文件，CLI 在仓库根目录找不到任务定义就直接退出。
+> 本项目没有套用 `wails3 init` 生成的那套 Taskfile（它假定 `frontend/bindings`、`build/appicon.png`、输出到 `bin/`），而是让根 `Taskfile.yml` 的 `build` 任务直接调用 `./build/gui.ps1`，因此两种入口的产出完全一致：前端资源、`logo.png` → `.ico` → `.syso` 图标链路、`-H windowsgui`、版本注入与 wails3 依赖自检。
+> `Taskfile.yml` 还定义了 `default`（= `build`）、`package`（= `build`，本项目不生成安装包）、`verify`（= `./build/verify.ps1`）；用 `wails3 task -list`、`wails3 task -dry build` 可检查配置是否生效。
+> `wails3 build -tags ...` / `-obfuscated` 会以 `EXTRA_TAGS` / `OBFUSCATED` 变量传给任务，但本项目编译参数统一由 `build/gui.ps1` 管理，这些变量当前不生效；要调整参数请改脚本。
+> 本机没有 mingw-w64 gcc 也能构建：入口原先的 `//go:build windows && cgo` 是多余约束，已改为 `//go:build windows`，`CGO_ENABLED=0` 下同样编译出真实 GUI 程序（见 §3.1.1）。
+
+命令总览：
+
+| 场景 | 命令 | 说明 |
+| --- | --- | --- |
+| 一键打包 exe | `./build/gui.ps1` | 前端构建 → 复制资源 → 生成图标 → 纯 Go 编译 → 校验 wails3 依赖 |
+| wails3 CLI 打包 | `wails3 build` | 需要根目录 `Taskfile.yml`；由 go-task 执行 `build` 任务，转发到 `./build/gui.ps1` |
+| 检查/干跑构建任务 | `wails3 task -list` / `wails3 task -dry build` | 确认 Taskfile 被识别 |
+| 仅环境/代码校验 | `./build/verify.ps1` | gofmt / go build / vet / test / vue-tsc / vite build |
+| 前端开发服务器 | `cd frontend; npm run dev` | Vite 热更新，端口见 `vite.config.ts` |
+| wails3 开发模式 | `wails3 dev` | v3 默认读 `./build/config.yml`（不是 `wails.json`），本项目未提供该配置；日常开发用上一行的 Vite dev server |
+| 重新生成前端绑定 | `wails3 generate bindings -names -i -d frontend/src/bindings ./internal/bridge` | 修改 `internal/bridge` 导出方法后执行 |
+| 仅生成图标 | `wails3 generate icons -input logo.png -windowsfilename build/windows/icon.ico -macfilename "$env:TEMP\db-fly-icon.icns"` | 换 logo 后执行 |
+| 仅生成 PE 资源 | `wails3 generate syso -icon build/windows/icon.ico -manifest build/windows/wails.exe.manifest -info build/windows/info.json -arch amd64 -out cmd/db-fly-gui/rsrc_windows_amd64.syso` | 纯 Go，无需 gcc |
+| 验证产物 | `go version -m dist/db-fly-gui.exe` | 应包含 `dep github.com/wailsapp/wails/v3`、`CGO_ENABLED=0` 与注入的版本号 |
+
+脚本显式设置 `CGO_ENABLED=0`、不需要 gcc，并在构建后用 `go version -m` 校验产物确实链入了 wails3 入口（而不是打印提示就退出的 stub）；不满足时删除产物并报错。
+
+脚本同时以仓库根目录的 **`logo.png` 为唯一图标来源**，依次生成 `build/windows/icon.ico`、`cmd/db-fly-gui/icon.png` 与 `cmd/db-fly-gui/rsrc_windows_<arch>.syso`，最终把图标链接进 `db-fly-gui.exe`（详见 §3.4.1）。
+
+手动直接构建（与脚本等价）：
+
+```powershell
+# 1) 构建 Vue 前端并复制到 Go 嵌入目录
+cd frontend; npm install; npm run build; cd ..
+Copy-Item -Recurse -Force frontend/dist/* cmd/db-fly-gui/assets/
+
+# 2) 从 logo.png 生成图标资源（需要 wails3 CLI，纯 Go）
+Copy-Item -Force logo.png cmd/db-fly-gui/icon.png
+wails3 generate icons -input logo.png -windowsfilename build/windows/icon.ico -macfilename "$env:TEMP\db-fly-icon.icns"
+wails3 generate syso -icon build/windows/icon.ico -manifest build/windows/wails.exe.manifest -info build/windows/info.json -arch amd64 -out cmd/db-fly-gui/rsrc_windows_amd64.syso
+
+# 3) 纯 Go 编译 wails3 入口（不需要 gcc）
+$env:CGO_ENABLED = "0"
+$env:GOOS = "windows"
+go build -trimpath -ldflags "-s -w -H windowsgui -X github.com/db-fly/db-fly/internal/bridge.Version=dev" -o dist/db-fly-gui.exe ./cmd/db-fly-gui
+```
+
+> wails3 v3 的 Windows 后端是纯 Go，`CGO_ENABLED=0` 即可编译真实 GUI；`main.go` 使用 `//go:build windows`、`stub.go` 使用 `//go:build !windows`，因此本机有无 gcc 都不会误编译占位入口。
+> 前端资源通过 `cmd/db-fly-gui/main.go` 的 `//go:embed all:assets` 内联进二进制；构建前务必先把 `frontend/dist` 复制到 `cmd/db-fly-gui/assets/`（见 `build/gui.ps1`）。
+> `-X github.com/db-fly/db-fly/internal/bridge.Version=...` 注入版本号（CLI 版本注入见 `build/cli.sh`，二者独立）。
+> 运行时需要 WebView2 Runtime（Windows 11 自带；Windows 10 需安装「Microsoft Edge WebView2 Runtime」），可随分发包附带 Evergreen Bootstrapper。
+
+#### 3.4.1 应用图标（logo.png）
+
+打包后 `db-fly-gui.exe` 的图标由根目录 `logo.png`（建议 ≥256×256、带透明通道的 PNG）驱动，链路如下：
+
+| 环节 | 命令 / 文件 | 作用 |
+| --- | --- | --- |
+| 图标源文件 | `logo.png` | 唯一来源，替换它即可换标 |
+| 多尺寸 ico | `wails3 generate icons` → `build/windows/icon.ico` | 生成 256/128/64/48/32/16 六种尺寸的 Windows 图标；由 `build/gui.ps1` 生成（`wails3 build` 经 Taskfile 转发到该脚本） |
+| PE 资源对象 | `wails3 generate syso` → `cmd/db-fly-gui/rsrc_windows_<arch>.syso` | 把 `.ico` + `wails.exe.manifest` + `info.json` 编成 COFF 对象；Go 链接器会自动把包目录下匹配平台的 `.syso` 链入 exe |
+| 运行时图标 | `main.go` 的 `//go:embed icon.png` → `application.Options.Icon` | Linux/macOS 的窗口与「关于」对话框图标 |
+
+> Windows 下 wails3 的 `setIcon` 是空实现，窗口类图标直接由 `LoadIconWithResourceID(instance, IDI_APPLICATION)` 从 **exe 资源**读取，因此 **`.syso` 是 Windows 图标生效的必要环节**，仅设置 `Options.Icon` 不够。
+> `generate syso` 基于纯 Go 的 `winres`，不需要 `windres`/gcc；`build/windows/wails.exe.manifest` 提供 DPI 感知与 Common-Controls，`info.json` 提供文件属性里的版本信息。
+> `frontend/public/logo.png` 是同一图标的副本，供窗口内页面通过 `index.html` 的 `<link rel="icon">` 显示；`build/gui.ps1` 每次构建都会从 `logo.png` 重新复制，保持三处同步。
 
 ### 3.5 测试
 

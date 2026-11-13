@@ -223,7 +223,11 @@ func consumeResult(sink ResultSink, rs domain.ResultSet, rsErr error, q domain.Q
 	limit := q.MaxRows
 	for pageIndex := 0; ; pageIndex++ {
 		cols := rs.Columns()
-		page := domain.ResultPage{Columns: cols}
+		if cols == nil {
+			cols = []domain.Column{}
+		}
+		// 空结果集序列化为 [] 而不是 null，避免表现层读取 columns/rows.length 时抛异常。
+		page := domain.ResultPage{Columns: cols, Rows: []domain.Row{}}
 		sink.OnResultStart(pageIndex, cols)
 
 		batch := make([]domain.Row, 0, domain.ResultBatchSize)

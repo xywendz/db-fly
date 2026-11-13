@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -118,6 +119,11 @@ func (a *App) importSQL(ctx context.Context, conn string, ref domain.ObjectRef, 
 	out := ImportOutcome{Format: "sql", Statements: len(statements)}
 	if len(statements) == 0 {
 		return out, domain.NewError(domain.CodeValidation, "import", "SQL 文件中没有可执行语句")
+	}
+	// 未选择目标数据库时，导入脚本必须自带建库 / 建表语句，否则无法确定执行上下文。
+	if ref.Database == "" && !sqlHasCreateStatement(statements) {
+		return out, domain.NewError(domain.CodeValidation, "import",
+			"未选择目标数据库，且 SQL 中不包含 CREATE DATABASE / CREATE TABLE 语句，无法确定执行上下文")
 	}
 	if opts.DryRun {
 		out.Preview = trimStrings(statements, 20)
@@ -432,4 +438,19 @@ func minInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+var (
+	reCreateTable = regexp.MustCompile(`(?i)^\s*CREATE\s+(?:TEMPORARY\s+|GLOBAL\s+TEMPORARY\s+)?TABLE\b`)
+	reCreateDB    = regexp.MustCompile(`(?i)^\s*CREATE\s+(?:DATABASE|SCHEMA)\b`)
+)
+
+// sqlHasCreateStatement 判断语句集合中是否包含建库 / 建表语句（CREATE DATABASE / SCHEMA / TABLE）。
+func sqlHasCreateStatement(statements []string) bool {
+	for _, s := range statements {
+		if reCreateDB.MatchString(s) || reCreateTable.MatchString(s) {
+			return true
+		}
+	}
+	return false
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/db-fly/db-fly/internal/provider"
 )
 
 // ServerInfo 返回已连接服务端的版本信息。
@@ -15,13 +16,14 @@ func (a *App) ServerInfo(ctx context.Context, conn string) (domain.ServerInfo, e
 	return s.ServerInfo(ctx)
 }
 
-// Capabilities 返回当前会话所属业务模块的能力集合。
+// Capabilities 返回指定连接的能力集合。能力由数据库类型静态决定，无需建立会话，
+// 避免前端加载连接列表时为每个连接都打开一个真实连接。
 func (a *App) Capabilities(ctx context.Context, conn string) (domain.CapabilitySet, error) {
-	s, err := a.Session(ctx, conn)
+	c, err := a.cfgOf(conn)
 	if err != nil {
 		return nil, err
 	}
-	return s.Capabilities(), nil
+	return provider.Capabilities(c.Kind)
 }
 
 func (a *App) ListDatabases(ctx context.Context, conn string) ([]domain.DatabaseInfo, error) {

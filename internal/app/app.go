@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -92,6 +93,41 @@ func (a *App) DropSession(id string) {
 	if ok {
 		_ = s.Close()
 	}
+}
+
+// CloseConnection 关闭指定连接的缓存会话并释放底层连接池，用于手动节省资源。
+func (a *App) CloseConnection(ctx context.Context, nameOrID string) error {
+	c, err := a.cfgOf(nameOrID)
+	if err != nil {
+		return err
+	}
+	a.DropSession(c.ID)
+	return nil
+}
+
+// OpenConnections 返回当前已建立会话（已打开）的连接名列表，供前端资源管理器展示。
+func (a *App) OpenConnections(ctx context.Context) ([]string, error) {
+	a.mu.Lock()
+	ids := make([]string, 0, len(a.sessions))
+	for id := range a.sessions {
+		ids = append(ids, id)
+	}
+	a.mu.Unlock()
+	if len(ids) == 0 {
+		return []string{}, nil
+	}
+	cfg, err := a.loadConfig()
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if c, ok := config.FindConnection(cfg, id); ok {
+			names = append(names, c.Name)
+		}
+	}
+	sort.Strings(names)
+	return names, nil
 }
 
 func (a *App) loadConfig() (*config.Config, error) {

@@ -1,0 +1,37 @@
+# https://taskfile.dev
+#
+# Wails v3 routes `wails3 build` / `wails3 package` through the Taskfile in the
+# project root (internal/commands/task_wrapper.go -> `wails3 task build GOOS=... ARCH=...`).
+# Without this file the CLI aborts with:
+#   ERROR task: No Taskfile found at "<project root>"
+#
+# This project does NOT use the generated Wails v3 Taskfile layout: the Vue build
+# is embedded via //go:embed, wails3 v3 on Windows is pure Go (CGO_ENABLED=0,
+# no gcc), and the Windows icon is linked from a generated .syso. All of that
+# lives in build/gui.ps1, so the tasks here are thin wrappers around that script.
+
+version: '3'
+
+tasks:
+  default:
+    desc: Build dist/db-fly-gui.exe (alias of build)
+    cmds:
+      - task: build
+
+  build:
+    desc: Build the Windows GUI exe (frontend + icons + syso + pure-Go go build)
+    # `wails3 build` also passes GOOS/ARCH (and optionally EXTRA_TAGS, OBFUSCATED,
+    # GARBLE_ARGS) as CLI variables. This project builds natively on Windows and
+    # build/gui.ps1 owns all Go flags, so those variables are intentionally unused.
+    cmds:
+      - powershell -NoProfile -ExecutionPolicy Bypass -File ./build/gui.ps1
+
+  package:
+    desc: Alias of build; this project ships a single exe, not an installer
+    cmds:
+      - task: build
+
+  verify:
+    desc: Run gofmt / go build / vet / test / vue-tsc / vite build (no gcc needed)
+    cmds:
+      - powershell -NoProfile -ExecutionPolicy Bypass -File ./build/verify.ps1

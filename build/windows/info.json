@@ -1,0 +1,14 @@
+{
+  "fixed": {
+    "file_version": "0.1.0"
+  },
+  "info": {
+    "0409": {
+      "ProductVersion": "0.1.0",
+      "CompanyName": "db-fly",
+      "FileDescription": "db-fly Multi-Database Client",
+      "ProductName": "db-fly",
+      "Comments": "Modular multi-database desktop client"
+    }
+  }
+}

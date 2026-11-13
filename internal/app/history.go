@@ -63,14 +63,13 @@ func (a *App) ListSavedQueries() ([]config.SavedQuery, error) {
 	return out, nil
 }
 
-// SaveSavedQuery 新增或更新收藏，名称必须唯一且非空。
+// SaveSavedQuery 新增或更新收藏。名称（在目录内）必须唯一且非空；
+// 内容允许为空（占位/待编辑）；未显式标注数据库类型时按连接自动推断。
 func (a *App) SaveSavedQuery(q config.SavedQuery) (config.SavedQuery, error) {
 	q.Name = strings.TrimSpace(q.Name)
+	q.Folder = strings.TrimSpace(q.Folder)
 	if q.Name == "" {
 		return q, domain.NewError(domain.CodeValidation, "saved_query", "收藏名称不能为空")
-	}
-	if strings.TrimSpace(q.Text) == "" {
-		return q, domain.NewError(domain.CodeValidation, "saved_query", "收藏内容不能为空")
 	}
 	if q.Language == "" {
 		q.Language = string(domain.LangSQL)
@@ -80,10 +79,15 @@ func (a *App) SaveSavedQuery(q config.SavedQuery) (config.SavedQuery, error) {
 	}
 	q.UpdatedAt = time.Now()
 	err := a.mutateConfig(func(cfg *config.Config) error {
+		if q.Kind == "" && q.Connection != "" {
+			if c, ok := config.FindConnection(cfg, q.Connection); ok {
+				q.Kind = string(c.Kind)
+			}
+		}
 		for _, existing := range cfg.SavedQueries {
-			if existing.Name == q.Name && existing.ID != q.ID {
+			if existing.Name == q.Name && existing.Folder == q.Folder && existing.ID != q.ID {
 				return domain.NewError(domain.CodeValidation, "saved_query",
-					"收藏名称 %q 已存在", q.Name)
+					"目录 %q 中已存在收藏 %q", q.Folder, q.Name)
 			}
 		}
 		config.UpsertSavedQuery(cfg, q)

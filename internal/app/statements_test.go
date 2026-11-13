@@ -38,6 +38,29 @@ func TestStatementAt(t *testing.T) {
 	}
 }
 
+func TestSqlHasCreateStatement(t *testing.T) {
+	cases := []struct {
+		name string
+		sql  string
+		want bool
+	}{
+		{"建库", "CREATE DATABASE mydb;", true},
+		{"建模式", "CREATE SCHEMA s", true},
+		{"建表", "CREATE TABLE t (id INT)", true},
+		{"临时表", "CREATE TEMPORARY TABLE tmp (id INT)", true},
+		{"if not exists", "CREATE TABLE IF NOT EXISTS t (id INT)", true},
+		{"仅插入", "INSERT INTO t VALUES (1); INSERT INTO t VALUES (2)", false},
+		{"仅查询", "SELECT * FROM t", false},
+		{"注释加建表", "-- 说明\nCREATE TABLE t (id INT)", true},
+		{"大小写", "create table t (id int)", true},
+	}
+	for _, c := range cases {
+		if got := sqlHasCreateStatement(SplitStatements(c.sql)); got != c.want {
+			t.Errorf("%s: 期望 %v, 实际 %v (sql=%q)", c.name, c.want, got, c.sql)
+		}
+	}
+}
+
 func TestCheckReadOnly(t *testing.T) {
 	for _, stmt := range []string{
 		"SELECT * FROM t", "  show tables", "WITH cte AS (SELECT 1) SELECT * FROM cte",
