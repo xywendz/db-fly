@@ -29,14 +29,15 @@ func (providerImpl) Open(ctx context.Context, cfg domain.ConnectionConfig) (doma
 	var root struct {
 		ClusterName string `json:"cluster_name"`
 		Version     struct {
-			Number string `json:"number"`
+			Number       string `json:"number"`
+			Distribution string `json:"distribution"`
 		} `json:"version"`
 	}
 	if _, err := c.jsonCall(ctx, http.MethodGet, "/", nil, &root); err != nil {
 		c.Close()
 		return nil, mapOpenError(err)
 	}
-	c.setVersion(root.Version.Number)
+	c.setVersion(root.Version.Number, root.Version.Distribution)
 	return &session{
 		client: c, cfg: cfg, caps: capabilitySet(),
 		version: root.Version.Number, cluster: root.ClusterName,

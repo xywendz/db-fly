@@ -58,6 +58,9 @@ const canNext = computed(() => loadedRows.value >= maxRows.value);
 const isDocument = computed(() => ["mongodb", "elasticsearch"].includes(
   store.connections.find((c) => c.name === props.tab.conn)?.kind ?? "",
 ));
+// 文档型（Elasticsearch / MongoDB）以表格下方草稿行方式新增，列头来自 mapping（含 _id）。
+const connKind = computed(() => store.connections.find((c) => c.name === props.tab.conn)?.kind ?? "");
+const isESDoc = computed(() => connKind.value === "elasticsearch");
 const pageDocs = computed(() => outcome.value?.pages?.[0]?.json_documents ?? []);
 
 // 草稿行转 INSERT 值：留空列不提供，输入 NULL 表示显式空值。
@@ -341,65 +344,97 @@ async function apply() {
   }
 }
 
-// ---- Mongo 文档编辑：JSON 输入新增 / 删除 ----
-const showDocModal = ref(false);
-const docText = ref("{\n  \n}");
-const docError = ref("");
+// ---- 文档型编辑（Elasticsearch / MongoDB）----
+// 复用关系型「表格下方新增空行」机制：新增文档即追加一行可就地填写的草稿行，
+// 字段来自 mapping（含 _id），提交时由统一的 buildEditRequest 转为 INSERT；
+// ES 文档还可基于草稿行生成 Dev-Tools DSL 复制执行。
+// ES 文档插入生成的 Dev-Tools DSL（供复制执行）。
+const dslText = ref("");
+// 把字段字符串尽量还原为真实类型：能解析为 JSON 标量/对象/数组则用解析值，否则当作字符串。
+function parseScalarLike(raw: string): any {
+  const t = (raw ?? "").trim();
+  if (t === "") return undefined;
+  try {
+    return JSON.parse(t);
+  } catch {
+    return t;
+  }
+}
+// 由「扁平字段名 → 值」构建文档；点路径（a.b.c）还原为嵌套对象。
+function buildDocFromFields(values: Record<string, string>): Record<string, any> {
+  const doc: Record<string, any> = {};
+  for (const [name, raw] of Object.entries(values)) {
+    const v = parseScalarLike(raw);
+    if (v === undefined) continue;
+    const parts = name.split(".");
+    let cur = doc;
+    for (let i = 0; i < parts.length - 1; i++) {
+      const p = parts[i];
+      if (typeof cur[p] !== "object" || cur[p] === null || Array.isArray(cur[p])) cur[p] = {};
+      cur = cur[p] as Record<string, any>;
+    }
+    cur[parts[parts.length - 1]] = v;
+  }
+  return doc;
+}
+// 生成 Dev-Tools 风格 DSL（与 SchemaEditor 的 PUT /index 语句一致），可直接在 Kibana / Dev-Tools 执行。
+function buildDSL(physical: string, obj: any): string {
+  const o = obj as Record<string, any>;
+  const id = o._id;
+  let body = o;
+  let suffix = "";
+  if (id !== undefined && id !== null && id !== "") {
+    body = { ...o };
+    delete (body as Record<string, any>)._id;
+    suffix = "/" + String(id);
+  }
+  return `POST /${physical}/_doc${suffix}\n${JSON.stringify(body, null, 2)}`;
+}
+// 解析物理索引名：复用 showCreateObject 返回的首行 `PUT /<physical>`。
+async function resolvePhysicalIndex(): Promise<string> {
+  try {
+    const sc = await api.showCreateObject(props.tab.conn, refObj.value);
+    const m = /^\s*PUT\s+\/(\S+)/.exec(sc);
+    if (m) return m[1];
+  } catch {
+    /* 忽略，回退到逻辑名 */
+  }
+  return refObj.value.name;
+}
+// 根据表格下方的草稿行（新增文档行）生成 ES 插入 DSL，供复制到 Kibana / Dev-Tools 执行。
+async function generateDSL() {
+  if (!drafts.value.length) {
+    store.setStatus("请先点击「新增文档」在表格下方填写后再生成 DSL", "warn");
+    return;
+  }
+  try {
+    const physical = await resolvePhysicalIndex();
+    const blocks: string[] = [];
+    for (const d of drafts.value) {
+      const obj = buildDocFromFields(d);
+      if (!Object.keys(obj).length) continue;
+      blocks.push(buildDSL(physical, obj));
+    }
+    if (!blocks.length) {
+      store.setStatus("草稿行为空，无可生成的 DSL", "warn");
+      return;
+    }
+    dslText.value = blocks.join("\n\n");
+    store.setStatus(`已生成 ${blocks.length} 条插入 DSL`, "ok");
+  } catch (e: any) {
+    store.setStatus("生成 DSL 失败：" + (e?.message ?? String(e)), "error");
+  }
+}
+async function copyDSL() {
+  if (!dslText.value) return;
+  try {
+    await navigator.clipboard.writeText(dslText.value);
+    store.notify("DSL 已复制到剪贴板", "ok", 1800);
+  } catch {
+    store.setStatus("剪贴板不可用，请手动选择复制", "warn");
+  }
+}
 
-function openInsertDoc() {
-  docText.value = "{\n  \n}";
-  docError.value = "";
-  showDocModal.value = true;
-}
-// 格式化（pretty-print）并顺带校验 JSON。
-function formatDoc() {
-  try {
-    const obj = JSON.parse(docText.value);
-    docText.value = JSON.stringify(obj, null, 2);
-    docError.value = "";
-  } catch (e: any) {
-    docError.value = "JSON 解析失败：" + (e?.message ?? e);
-  }
-}
-async function insertDoc() {
-  let obj: any;
-  try {
-    obj = JSON.parse(docText.value);
-  } catch (e: any) {
-    docError.value = "JSON 解析失败：" + (e?.message ?? e);
-    return;
-  }
-  if (obj === null || typeof obj !== "object" || Array.isArray(obj)) {
-    docError.value = "请输入一个 JSON 对象（即单个文档）";
-    return;
-  }
-  const values: Record<string, string | null> = {};
-  for (const [k, v] of Object.entries(obj)) {
-    if (v === null) values[k] = null;
-    else values[k] = JSON.stringify(v);
-  }
-  if (!Object.keys(values).length) {
-    docError.value = "文档为空，无法插入";
-    return;
-  }
-  applying.value = true;
-  try {
-    const res = await api.applyDataEdit(props.tab.conn, {
-      ref: refObj.value,
-      key_columns: [],
-      edits: [{ kind: "insert", values }],
-      transaction: false,
-    });
-    store.setStatus(`已插入 ${res.applied} 个文档`, "ok");
-    showDocModal.value = false;
-    await refresh();
-  } catch (e: any) {
-    docError.value = e?.message ?? String(e);
-    store.setStatus(`插入失败：${docError.value}`, "error");
-  } finally {
-    applying.value = false;
-  }
-}
 
 // 在 JSON 文档视图中按 _id 直接删除（规避行号对齐问题）。
 async function deleteDocByIndex(i: number) {
@@ -544,8 +579,12 @@ async function deleteDocByIndex(i: number) {
         <Icon name="plus" :size="13" /> 新增行
         <span v-if="drafts.length" class="badge badge-accent">{{ drafts.length }}</span>
       </button>
-      <button v-else class="btn btn-sm btn-primary" title="以 JSON 文档形式新增一行" @click="openInsertDoc">
+      <button v-else class="btn btn-sm btn-primary" :disabled="!colNames.length" title="在表格下方新增一行文档（字段来自 mapping）" @click="addDraftRow">
         <Icon name="plus" :size="13" /> 新增文档
+        <span v-if="drafts.length" class="badge badge-accent">{{ drafts.length }}</span>
+      </button>
+      <button v-if="isESDoc" class="btn btn-sm" :disabled="!drafts.length" title="根据下方新增行生成 Dev-Tools DSL" @click="generateDSL">
+        <Icon name="code" :size="13" /> 生成 DSL
       </button>
       <button class="btn btn-sm btn-danger" :disabled="!selectedRows.length" title="删除选中的行" @click="markDeleted">
         <Icon name="trash" :size="13" /> 删除选中 ({{ selectedRows.length }})
@@ -571,6 +610,8 @@ async function deleteDocByIndex(i: number) {
       <span class="badge" :class="pendingCount ? 'badge-warn' : ''">待提交 {{ pendingCount }} 项</span>
       <span class="faint" style="font-size: 11px">双击单元格编辑 · 勾选行可删除 · 新增行在表格下方空行填写（留空不提供，NULL 为空值）· 右键可复制 / 插入复制行</span>
     </div>
+
+
 
     <div v-if="previewSQL" class="preview-box">
       <div class="row" style="margin-bottom: 6px">
@@ -610,38 +651,16 @@ async function deleteDocByIndex(i: number) {
       />
     </div>
 
-    <ContextMenu :open="ctxMenu.open" :x="ctxMenu.x" :y="ctxMenu.y" :items="ctxMenu.items" @close="ctxMenu.open = false" />
-
-    <div v-if="showDocModal" class="modal-mask" @click.self="showDocModal = false">
-      <div class="modal card">
-        <div class="card-head">
-          <Icon name="layers" :size="14" />
-          <h4>新增 MongoDB 文档</h4>
-          <span class="grow"></span>
-          <button class="btn btn-icon" style="width: 22px; height: 22px" @click="showDocModal = false">
-            <Icon name="close" :size="12" />
-          </button>
-        </div>
-        <div class="card-body col" style="gap: 8px">
-          <span class="faint" style="font-size: 11px">
-            输入一个 JSON 文档（对象）。嵌套对象 / 数组 / ObjectId（<code>{"$oid":"..."}</code>）均会被保留。
-          </span>
-          <textarea v-model="docText" class="doc-input mono" :class="{ invalid: !!docError }" spellcheck="false" placeholder='{ "name": "alice", "age": 30 }'></textarea>
-          <div v-if="docError" class="alert alert-error" style="margin: 0">{{ docError }}</div>
-        </div>
-        <div class="card-foot row" style="gap: 8px">
-          <button class="btn btn-sm" title="格式化并校验 JSON" @click="formatDoc">
-            <Icon name="code" :size="12" /> 格式化
-          </button>
-          <span class="grow"></span>
-          <button class="btn btn-sm" @click="showDocModal = false">取消</button>
-          <button class="btn btn-sm btn-primary" :disabled="applying" @click="insertDoc">
-            <span v-if="applying" class="spinner" style="width: 12px; height: 12px"></span>
-            <Icon v-else name="save" :size="12" /> 插入文档
-          </button>
-        </div>
+    <div v-if="isESDoc && dslText" class="dsl-block">
+      <div class="dsl-head">
+        <span class="faint" style="font-size: 11px">Elasticsearch 插入 DSL（Dev-Tools / Kibana Console 可直接执行）</span>
+        <span class="grow"></span>
+        <button class="btn btn-sm" title="复制 DSL" @click="copyDSL"><Icon name="copy" :size="12" /> 复制</button>
       </div>
+      <pre class="doc-input mono" style="white-space: pre">{{ dslText }}</pre>
     </div>
+
+    <ContextMenu :open="ctxMenu.open" :x="ctxMenu.x" :y="ctxMenu.y" :items="ctxMenu.items" @close="ctxMenu.open = false" />
   </div>
 </template>
 
@@ -654,9 +673,16 @@ async function deleteDocByIndex(i: number) {
 .preview-box { flex-shrink: 0; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 9px 11px; }
 .preview-box pre { max-height: 150px; overflow: auto; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 9px; font-size: 11px; line-height: 1.6; }
 .grid-pane { flex: 1; min-height: 0; min-width: 0; display: flex; overflow: hidden; }
-.modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 20px; }
-.modal { width: min(640px, 100%); max-height: 86vh; display: flex; flex-direction: column; }
-.modal .card-body { overflow: auto; }
+.insert-card { flex-shrink: 0; }
+.field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+.seg-btn { background: transparent; border: 0; color: var(--text-dim); font-size: 12px; padding: 4px 10px; cursor: pointer; }
+.seg-btn.active { background: #4c7dff; color: #fff; }
+.seg-btn:disabled { opacity: .4; cursor: not-allowed; }
+.insert-card { flex-shrink: 0; }
+.dsl-block { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.dsl-head { display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: rgba(255,255,255,.03); border-bottom: 1px solid var(--border); }
+.dsl-block .doc-input { margin: 0; border: 0; border-radius: 0; max-height: 300px; overflow: auto; }
 .card-foot { display: flex; align-items: center; gap: 8px; padding: 9px 11px; border-top: 1px solid var(--border); flex-shrink: 0; }
 .doc-input { width: 100%; min-height: 280px; resize: vertical; font-family: var(--mono); font-size: 13px; line-height: 1.55; background: var(--bg); border-color: var(--border); }
 .doc-input.invalid { border-color: var(--danger); }

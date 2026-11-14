@@ -16,7 +16,7 @@ type dataEditor struct {
 	cfg    domain.ConnectionConfig
 }
 
-func (e *dataEditor) Preview(_ context.Context, req domain.EditRequest) ([]string, error) {
+func (e *dataEditor) Preview(ctx context.Context, req domain.EditRequest) ([]string, error) {
 	if len(req.Edits) == 0 {
 		return nil, domain.NewError(domain.CodeValidation, "es.edit", "没有待提交的变更")
 	}
@@ -24,9 +24,10 @@ func (e *dataEditor) Preview(_ context.Context, req domain.EditRequest) ([]strin
 	if err != nil {
 		return nil, err
 	}
+	typeName := e.resolveTypeName(ctx, physical)
 	out := make([]string, 0, len(req.Edits))
 	for i, edit := range req.Edits {
-		lines, err := bulkLines(edit, physical, rawDocAt(req, i))
+		lines, err := bulkLines(edit, physical, rawDocAt(req, i), typeName)
 		if err != nil {
 			return nil, err
 		}
@@ -45,10 +46,11 @@ func (e *dataEditor) Apply(ctx context.Context, req domain.EditRequest) (domain.
 	if err != nil {
 		return domain.EditResult{}, err
 	}
+	typeName := e.resolveTypeName(ctx, physical)
 	var body bytes.Buffer
 	statements := make([]string, 0, minInt(20, len(req.Edits)))
 	for i, edit := range req.Edits {
-		lines, err := bulkLines(edit, physical, rawDocAt(req, i))
+		lines, err := bulkLines(edit, physical, rawDocAt(req, i), typeName)
 		if err != nil {
 			return domain.EditResult{}, err
 		}
@@ -90,6 +92,24 @@ func (e *dataEditor) target(ref domain.ObjectRef) (string, error) {
 	return physical, nil
 }
 
+// resolveTypeName 返回该索引在 _bulk 动作里需要的 _type：
+// ES 7+ / OpenSearch 已移除类型，返回空串；ES 5.x/6.x 需从索引 mapping 取出真实类型
+// （每个索引的类型可能不同，不能用全局默认值），取不到时回退到 "doc"。
+func (e *dataEditor) resolveTypeName(ctx context.Context, physical string) string {
+	if e.client.isOpenSearch() || e.client.majorVersion() >= 7 {
+		return ""
+	}
+	var raw map[string]any
+	if _, err := e.client.jsonCall(ctx, http.MethodGet, "/"+physical+"/_mapping", nil, &raw); err != nil {
+		return "doc"
+	}
+	mappings := asMap(asMap(asMap(raw)[physical])["mappings"])
+	for t := range mappings {
+		return t
+	}
+	return "doc"
+}
+
 func inspectBulkResponse(reportedErrors bool, items []map[string]any, total int) (int, []string) {
 	// 部分兼容实现不返回 items；此时以服务端的 errors 标志为准。
 	if len(items) == 0 {
@@ -117,7 +137,7 @@ func inspectBulkResponse(reportedErrors bool, items []map[string]any, total int)
 
 // bulkLines 把一条 RowEdit 转成 _bulk 的 1~2 行 NDJSON。
 // rawDoc 非空时（JSON/NDJSON 导入）直接写入原始文档，保留标量类型与嵌套结构。
-func bulkLines(edit domain.RowEdit, physical, rawDoc string) ([]string, error) {
+func bulkLines(edit domain.RowEdit, physical, rawDoc, typeName string) ([]string, error) {
 	switch edit.Kind {
 	case domain.EditInsert:
 		var source any
@@ -135,6 +155,9 @@ func bulkLines(edit domain.RowEdit, physical, rawDoc string) ([]string, error) {
 			source = sourceFromValues(edit.Values)
 		}
 		action := map[string]any{"_index": physical}
+		if typeName != "" {
+			action["_type"] = typeName
+		}
 		if id != "" {
 			action["_id"] = id
 		}
@@ -161,9 +184,11 @@ func bulkLines(edit domain.RowEdit, physical, rawDoc string) ([]string, error) {
 		if len(doc) == 0 {
 			return nil, domain.NewError(domain.CodeValidation, "es.edit", "更新内容为空")
 		}
-		head, err := encodeLine(map[string]any{"update": map[string]any{
-			"_index": physical, "_id": id, "retry_on_conflict": 3,
-		}})
+		um := map[string]any{"_index": physical, "_id": id, "retry_on_conflict": 3}
+		if typeName != "" {
+			um["_type"] = typeName
+		}
+		head, err := encodeLine(map[string]any{"update": um})
 		if err != nil {
 			return nil, err
 		}
@@ -182,9 +207,11 @@ func bulkLines(edit domain.RowEdit, physical, rawDoc string) ([]string, error) {
 			return nil, domain.NewError(domain.CodeValidation, "es.edit",
 				"删除文档必须提供 _id 键值")
 		}
-		head, err := encodeLine(map[string]any{"delete": map[string]any{
-			"_index": physical, "_id": id,
-		}})
+		dm := map[string]any{"_index": physical, "_id": id}
+		if typeName != "" {
+			dm["_type"] = typeName
+		}
+		head, err := encodeLine(map[string]any{"delete": dm})
 		if err != nil {
 			return nil, err
 		}

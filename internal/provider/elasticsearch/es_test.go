@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -32,13 +33,21 @@ type fakeES struct {
 	reqs     []recordedRequest
 	server   *httptest.Server
 	bulkFail bool
+	version  string // 模拟集群版本号，默认 8.x
 }
 
 func newFakeES(t *testing.T) *fakeES {
 	t.Helper()
-	f := &fakeES{}
+	f := &fakeES{version: "8.12.0"}
 	f.server = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.server.Close)
+	return f
+}
+
+// newFakeESWithVersion 构造指定版本号的模拟集群，用于验证 ES6/ES7 兼容差异。
+func newFakeESWithVersion(t *testing.T, version string) *fakeES {
+	f := newFakeES(t)
+	f.version = version
 	return f
 }
 
@@ -72,7 +81,7 @@ func (f *fakeES) serve(w http.ResponseWriter, r *http.Request) {
 	case path == "/":
 		writeJSON(map[string]any{
 			"cluster_name": "test-cluster",
-			"version":      map[string]any{"number": "8.12.0"},
+			"version":      map[string]any{"number": f.version},
 		})
 	case path == "/_cat/indices":
 		writeJSON([]any{
@@ -469,6 +478,11 @@ func TestCommandHelpers(t *testing.T) {
 	if numberFromAny(settings["number_of_shards"]) != 2 {
 		t.Fatalf("settings = %v", settings)
 	}
+	// 默认不发送 mappings.dynamic：标量 dynamic 会触发 ES 的 class_cast_exception，
+	// Elasticsearch 默认 dynamic=true，行为一致。
+	if _, ok := asMap(body["mappings"])["dynamic"]; ok {
+		t.Fatalf("不应发送 mappings.dynamic: %v", body["mappings"])
+	}
 	props := asMap(asMap(body["mappings"])["properties"])
 	if len(props) != 2 || asMap(props["age"])["type"] != "long" {
 		t.Fatalf("properties = %v", props)
@@ -496,11 +510,122 @@ func TestCommandHelpers(t *testing.T) {
 	}
 	legacy := templateBody(&esClient{composableTemplates: false, cfg: c.cfg},
 		"shop", map[string]any{"number_of_replicas": 1})
-	if legacy["settings"] == nil || legacy["template"] != nil || legacy["order"] == nil {
-		t.Fatalf("legacy 模板结构不正确: %v", legacy)
+	if legacy["settings"] == nil || legacy["order"] == nil {
+		t.Fatalf("legacy 模板缺少 settings/order: %v", legacy)
+	}
+	if tpl, ok := legacy["template"].([]any); !ok || len(tpl) != 0 {
+		t.Fatalf("legacy 模板应提供空组件模板列表: %v", legacy)
+	}
+	// 无 settings/mappings/aliases 时，组合模板仍必须包含非空的 template.settings，
+	// 否则真实 Elasticsearch 报 "template is missing"。
+	empty := templateBody(&esClient{composableTemplates: true, cfg: c.cfg}, "shop", map[string]any{})
+	if tpl := asMap(empty["template"]); tpl == nil || tpl["settings"] == nil {
+		t.Fatalf("空选项时组合模板必须至少含 settings: %v", empty)
 	}
 	if !strings.Contains(string(mustJSON(t, esFieldType("BOOL"))), "boolean") {
 		t.Fatal("布尔类型映射错误")
+	}
+}
+
+// TestCreateIndexBodyLegacy 确认旧版 Elasticsearch（5.x/6.x）下创建索引会自动包一层类型
+// （mappings.doc.properties）。注意：ES 5.x 的 type 名不能以 '_' 开头，故用 "doc" 而非 "_doc"。
+func TestCreateIndexBodyLegacy(t *testing.T) {
+	body := createIndexBody(map[string]any{
+		"number_of_shards": 1,
+		"mappings": map[string]any{"properties": map[string]any{
+			"name": map[string]any{"type": "text"},
+		}},
+	}, []domain.ColumnSpec{
+		{Name: "title", Type: "VARCHAR(255)"},
+	}, "doc")
+
+	mappings := asMap(body["mappings"])
+	if mappings == nil {
+		t.Fatalf("旧版 ES 下 mappings 应包裹类型: %v", body)
+	}
+	typeWrap, ok := mappings["doc"].(map[string]any)
+	if !ok {
+		t.Fatalf("旧版 ES 下 mappings 必须含 doc 类型包裹: %v", mappings)
+	}
+	if asMap(typeWrap["properties"])["name"] == nil {
+		t.Fatalf("字段应位于 mappings.doc.properties: %v", typeWrap)
+	}
+	// 确认旧写法（无类型）不再出现，且不能用 '_' 开头的类型名。
+	if _, hasProps := mappings["properties"]; hasProps {
+		t.Fatalf("旧版 ES 不应把 properties 直接放在 mappings 根级: %v", mappings)
+	}
+	if _, hasUnderscore := mappings["_doc"]; hasUnderscore {
+		t.Fatalf("旧版 ES 不能用 _doc（类型名禁用以 '_' 开头）: %v", mappings)
+	}
+}
+
+// TestWrapMappingsType 验证对粘贴的 ES7 脚本做旧版 ES 兼容转换，且已符合旧版结构的不重复包裹。
+func TestWrapMappingsType(t *testing.T) {
+	// ES7 风格 -> 应包裹 doc。
+	es7 := map[string]any{"mappings": map[string]any{"properties": map[string]any{
+		"name": map[string]any{"type": "text"},
+	}}}
+	out := wrapMappingsType(es7, "doc")
+	m := asMap(out.(map[string]any)["mappings"])
+	if _, ok := m["doc"].(map[string]any); !ok {
+		t.Fatalf("ES7 风格应被包裹为 doc: %v", m)
+	}
+	// 已经是旧版风格（mappings.doc.properties） -> 保持原样。
+	es6 := map[string]any{"mappings": map[string]any{"doc": map[string]any{
+		"properties": map[string]any{"name": map[string]any{"type": "text"}},
+	}}}
+	out2 := wrapMappingsType(es6, "doc")
+	if _, ok := out2.(map[string]any)["mappings"].(map[string]any)["doc"]; !ok {
+		t.Fatalf("已是旧版风格不应被二次包裹: %v", out2)
+	}
+	// 类型名为空（ES7+/OpenSearch）时不包裹。
+	if out3 := wrapMappingsType(es7, ""); !reflect.DeepEqual(out3, es7) {
+		t.Fatalf("类型名为空时应原样返回: %v", out3)
+	}
+}
+
+// TestExecuteDevToolsCreateIndexLegacy 确认在旧版 Elasticsearch（5.x）集群上，
+// 查询页粘贴的 ES7 创建索引脚本会被自动适配为 mappings.doc.properties。
+func TestExecuteDevToolsCreateIndexLegacy(t *testing.T) {
+	f := newFakeESWithVersion(t, "5.6.12")
+	sess := testSession(t, f, nil)
+	ctx := context.Background()
+	script := "PUT /shop.users\n" + `{
+  "mappings": {
+    "properties": {
+      "name": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}}
+    }
+  },
+  "settings": {"number_of_shards": 1, "number_of_replicas": 1}
+}`
+	rs, err := sess.Query().Execute(ctx, domain.Query{Language: domain.LangESDSL, Text: script})
+	if err != nil {
+		t.Fatalf("旧版 ES 集群执行应成功: %v", err)
+	}
+	for rs.Next() {
+	}
+	put := f.find(t, http.MethodPut, "/shop.users")
+	t.Logf("LEGACY WIRE BODY => %s", put.Body)
+	// 必须包进 doc，且 mappings 根级不能有裸字段 name、不能用 _doc。
+	if !strings.Contains(put.Body, `"doc"`) {
+		t.Fatalf("旧版 ES 集群请求体应含 doc 类型包裹: %s", put.Body)
+	}
+	var sent map[string]any
+	if err := json.Unmarshal([]byte(put.Body), &sent); err != nil {
+		t.Fatalf("回放 body 失败: %v", err)
+	}
+	mappings := asMap(sent["mappings"])
+	if mappings == nil {
+		t.Fatalf("body 缺少 mappings: %s", put.Body)
+	}
+	if _, atRoot := mappings["name"]; atRoot {
+		t.Fatalf("name 不应处于 mappings 根级: %s", put.Body)
+	}
+	if _, hasDoc := mappings["doc"]; !hasDoc {
+		t.Fatalf("旧版 ES 必须有 doc 类型包裹: %s", put.Body)
+	}
+	if _, hasUnderscore := mappings["_doc"]; hasUnderscore {
+		t.Fatalf("旧版 ES 不能用 _doc: %s", put.Body)
 	}
 }
 
@@ -637,8 +762,11 @@ func TestCreateDatabaseAndIndexScripts(t *testing.T) {
 		t.Fatal(err)
 	}
 	create := f.find(t, http.MethodPut, "/shop.users")
-	if !strings.Contains(create.Body, `"properties"`) || !strings.Contains(create.Body, `"dynamic":"strict"`) {
-		t.Fatalf("建索引请求体 = %s", create.Body)
+	if !strings.Contains(create.Body, `"properties"`) {
+		t.Fatalf("建索引请求体应含 properties: %s", create.Body)
+	}
+	if strings.Contains(create.Body, `"dynamic"`) {
+		t.Fatalf("建索引请求体不应含 dynamic（ES issue #41120）: %s", create.Body)
 	}
 	ddl, err := editor.ShowCreate(ctx, domain.ObjectRef{Database: "shop", Name: "users"})
 	if err != nil || !strings.HasPrefix(ddl, "PUT /shop.users") {
@@ -750,6 +878,52 @@ func TestExecRESTCommand(t *testing.T) {
 		t.Fatalf("Exec 结果 = %+v", res)
 	}
 	f.find(t, http.MethodPut, "/shop.users/_settings")
+}
+
+// 查询页直接粘贴 Dev-Tools 格式的创建索引脚本并执行，应真正创建索引并返回结果，
+// 而不再被误当作 _search DSL 而无响应。
+func TestExecuteDevToolsCreateIndex(t *testing.T) {
+	f := newFakeES(t)
+	sess := testSession(t, f, nil)
+	ctx := context.Background()
+	script := "PUT /shop.users\n" + `{
+  "settings": {"number_of_shards": 1, "number_of_replicas": 1},
+  "mappings": {
+    "properties": {
+      "name": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}}
+    }
+  }
+}`
+	rs, err := sess.Query().Execute(ctx, domain.Query{Language: domain.LangESDSL, Text: script})
+	if err != nil {
+		t.Fatalf("查询页执行 Dev-Tools 脚本失败: %v", err)
+	}
+	// 确认索引确实被创建：PUT /shop.users 应被调用且含 properties。
+	put := f.find(t, http.MethodPut, "/shop.users")
+	t.Logf("WIRE BODY => %s", put.Body)
+	if !strings.Contains(put.Body, `"properties"`) {
+		t.Fatalf("建索引请求体应含 properties: %s", put.Body)
+	}
+	// mappings 根级不应出现裸字段名 name（否则 Elasticsearch 报 unsupported parameters）。
+	var sent map[string]any
+	if err := json.Unmarshal([]byte(put.Body), &sent); err != nil {
+		t.Fatalf("回放 body 失败: %v", err)
+	}
+	mappings := asMap(sent["mappings"])
+	if mappings == nil {
+		t.Fatalf("body 缺少 mappings: %s", put.Body)
+	}
+	if _, atRoot := mappings["name"]; atRoot {
+		t.Fatalf("name 不应处于 mappings 根级（缺 properties 包裹）: %s", put.Body)
+	}
+	// 确认有结果返回（不再是“无响应”）。
+	doc := ""
+	for rs.Next() {
+		doc = rs.Document()
+	}
+	if !strings.Contains(doc, "PUT /shop.users") {
+		t.Fatalf("结果应回显执行的命令: %s", doc)
+	}
 }
 
 func TestDataEditorBulkAndLosslessDocuments(t *testing.T) {
@@ -867,5 +1041,127 @@ func TestErrorMapping(t *testing.T) {
 	raw := []byte(`{"error":{"type":"index_not_found_exception","reason":"no such index [x]","index":"x"},"status":404}`)
 	if !errors.As(parseESError(raw, 404), &parsed) || parsed.Type != "index_not_found_exception" {
 		t.Fatal("ES 错误体解析失败")
+	}
+}
+
+func TestCreateIndexBodyNormalization(t *testing.T) {
+	// 高级 mappings 以 "field": "type" 字符串值写法时，必须自动规范化为 {"type":"type"}，
+	// 否则真实 Elasticsearch 会报 class_cast_exception: String cannot be cast to java.util.Map。
+	body := createIndexBody(map[string]any{
+		"mappings": map[string]any{"properties": map[string]any{"title": "text", "price": "double"}},
+	}, nil)
+	props := asMap(asMap(body["mappings"])["properties"])
+	if len(props) != 2 {
+		t.Fatalf("properties = %v", props)
+	}
+	title := asMap(props["title"])
+	if title["type"] != "text" {
+		t.Fatalf("title 应被规范化为 {type:text}: %v", title)
+	}
+	price := asMap(props["price"])
+	if price["type"] != "double" {
+		t.Fatalf("price 应被规范化为 {type:double}: %v", price)
+	}
+
+	// 别名以字符串 / 数组形式给出时，应规范化为 {"aliasName": {}} 对象。
+	a1 := createIndexBody(map[string]any{"aliases": "read"}, nil)
+	if asMap(a1["aliases"])["read"] == nil {
+		t.Fatalf("字符串别名应规范化为对象: %v", a1["aliases"])
+	}
+	a2 := createIndexBody(map[string]any{"aliases": []any{"r1", "r2"}}, nil)
+	am := asMap(a2["aliases"])
+	if am["r1"] == nil || am["r2"] == nil {
+		t.Fatalf("数组别名应规范化为对象: %v", a2["aliases"])
+	}
+
+	// dynamic 不应出现在创建索引 body 中：标量 dynamic 会触发 ES 的 class_cast_exception
+	// （见 ES issue #41120），Elasticsearch 默认 dynamic=true。
+	for _, dv := range []any{"true", "false", true, "strict"} {
+		d := createIndexBody(map[string]any{"dynamic": dv}, nil)
+		if _, ok := asMap(d["mappings"])["dynamic"]; ok {
+			t.Fatalf("dynamic=%v 不应出现在 body 中: %v", dv, d["mappings"])
+		}
+	}
+}
+
+// 高级 mappings 直接写字段定义（未包 properties）时，应自动包进 properties，
+// 否则 Elasticsearch 报 "Root mapping definition has unsupported parameters: [name : ...]"。
+func TestCreateIndexBodyAutoWrapProperties(t *testing.T) {
+	// 用户直接在高级 mappings 文本框写下字段（无 properties 包裹），且字段形态与
+	// esFieldType("VARCHAR") 生成的一致（含 fields.keyword 子字段）。
+	opts := map[string]any{
+		"mappings": map[string]any{
+			"name": map[string]any{
+				"type": "text",
+				"fields": map[string]any{
+					"keyword": map[string]any{"type": "keyword", "ignore_above": 256},
+				},
+			},
+		},
+		"settings": map[string]any{"number_of_shards": 1, "number_of_replicas": 1},
+	}
+	body := createIndexBody(opts, nil)
+	m := asMap(body["mappings"])
+	props := asMap(m["properties"])
+	if props == nil {
+		t.Fatalf("字段应被包进 mappings.properties: %v", body["mappings"])
+	}
+	name := asMap(props["name"])
+	if name == nil || name["type"] != "text" {
+		t.Fatalf("properties.name 缺失或类型错误: %v", props["name"])
+	}
+	// 顶层不应再出现裸字段名 name
+	if _, ok := m["name"]; ok {
+		t.Fatalf("name 不应处于 mappings 根级: %v", body["mappings"])
+	}
+
+	// 字符串值字段也应被规范化为 {"type":"text"}。
+	opts2 := map[string]any{
+		"mappings": map[string]any{"title": "text", "age": "integer"},
+	}
+	props2 := asMap(asMap(createIndexBody(opts2, nil)["mappings"])["properties"])
+	if asMap(props2["title"])["type"] != "text" || asMap(props2["age"])["type"] != "integer" {
+		t.Fatalf("字符串字段应规范化为 {\"type\":...}: %v", props2)
+	}
+
+	// 同时含 properties 显式写法时，以 properties 为准。
+	opts3 := map[string]any{
+		"mappings": map[string]any{
+			"properties": map[string]any{"id": map[string]any{"type": "keyword"}},
+			"_source":    map[string]any{"enabled": false},
+		},
+	}
+	body3 := createIndexBody(opts3, nil)
+	m3 := asMap(body3["mappings"])
+	if asMap(m3["properties"])["id"] == nil {
+		t.Fatalf("properties.id 应保留: %v", m3)
+	}
+	if asMap(m3["_source"])["enabled"] != false {
+		t.Fatalf("_source 等根级设置应保留: %v", m3)
+	}
+}
+
+// 建索引脚本必须输出真正的 Elasticsearch REST 语句（PUT /索引 + JSON body），
+// 不得包含内部 es_command 的 action/database/collection/options 元数据。
+func TestCreateTableScriptIsREST(t *testing.T) {
+	cfg := domain.ConnectionConfig{Params: map[string]string{"namespaceSeparator": "."}}
+	editor := &schemaEditor{cfg: cfg}
+	script, err := editor.CreateTableScript(context.Background(), domain.TableDefinition{
+		Ref:     domain.ObjectRef{Database: "", Name: "users"},
+		Columns: []domain.ColumnSpec{{Name: "name", Type: "VARCHAR(100)"}},
+		Options: `{"number_of_shards":1,"dynamic":"true"}`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stmt := script.Statements[0]
+	if !strings.HasPrefix(stmt, "PUT /users\n") {
+		t.Fatalf("建索引脚本应以 'PUT /users' 开头，得到: %s", stmt)
+	}
+	if strings.Contains(stmt, `"action"`) || strings.Contains(stmt, `"database"`) || strings.Contains(stmt, `"collection"`) || strings.Contains(stmt, `"options"`) {
+		t.Fatalf("建索引脚本不应含 es_command 元数据: %s", stmt)
+	}
+	if !strings.Contains(stmt, `"mappings"`) || !strings.Contains(stmt, `"settings"`) {
+		t.Fatalf("建索引脚本应含 mappings/settings: %s", stmt)
 	}
 }

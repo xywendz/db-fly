@@ -11,6 +11,7 @@ import (
 	"github.com/db-fly/db-fly/internal/platform/audit"
 	"github.com/db-fly/db-fly/internal/platform/config"
 	"github.com/db-fly/db-fly/internal/platform/credential"
+	"github.com/db-fly/db-fly/internal/platform/logging"
 	"github.com/db-fly/db-fly/internal/provider"
 	_ "github.com/db-fly/db-fly/internal/provider/all"
 )
@@ -76,9 +77,11 @@ func (c *cli) init() error {
 	if err != nil {
 		return err
 	}
-	var logger audit.Logger = audit.Nop{}
-	if l, lerr := audit.New(dir); lerr == nil {
-		logger = l
+	// 统一日志：在当前运行目录的 logs/ 下输出标准日志与数据库操作审计日志。
+	logger, _, lerr := logging.Setup("")
+	if lerr != nil {
+		fmt.Fprintf(os.Stderr, "警告：初始化日志失败: %v\n", lerr)
+		logger = audit.Nop{}
 	}
 	c.app = app.New(cfg, secrets, logger)
 

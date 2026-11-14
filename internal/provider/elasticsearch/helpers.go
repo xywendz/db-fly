@@ -3,6 +3,7 @@ package elasticsearch
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -31,7 +32,7 @@ type esCommand struct {
 	Options     map[string]any `json:"options,omitempty"`
 	Method      string         `json:"method,omitempty"`
 	Path        string         `json:"path,omitempty"`
-	Body        map[string]any `json:"body,omitempty"`
+	Body        any            `json:"body,omitempty"`
 	IfNotExists bool           `json:"if_not_exists,omitempty"`
 }
 
@@ -57,6 +58,75 @@ func commandScript(statements, rollbacks, warnings []string) domain.Script {
 		Format: scriptFormat, Statements: statements,
 		Rollback: rollbacks, Warnings: warnings,
 	}
+}
+
+// encDevTools 生成 Dev-Tools 风格的可读 ES 语句：首行为 "METHOD /path"，其余为缩进后的 JSON body。
+// 这样预览/脚本中只包含真正的 Elasticsearch 请求，而不暴露内部动作指令（action/database/options）。
+func encDevTools(method, path string, body any) (string, error) {
+	if body == nil {
+		return strings.ToUpper(method) + " " + path, nil
+	}
+	b, err := marshalIndent(body)
+	if err != nil {
+		return "", err
+	}
+	return strings.ToUpper(method) + " " + path + "\n" + b, nil
+}
+
+// parseDevTools 解析 Elasticsearch 语句，支持两种形式：
+//  1. JSON REST 命令：{"method":"PUT","path":"/x","body":{...}}（query.Exec 的路径）；
+//  2. Dev-Tools 风格：首行 "METHOD /path"，其余为 JSON body。
+//
+// 无法识别（如旧版 es_command JSON，无 method/path）时 ok=false。
+func parseDevTools(text string) (method, path string, body any, ok bool) {
+	s := strings.TrimSpace(text)
+	if s == "" {
+		return "", "", nil, false
+	}
+	if strings.HasPrefix(s, "{") {
+		var rest struct {
+			Method string `json:"method"`
+			Path   string `json:"path"`
+			Body   any    `json:"body"`
+		}
+		if err := json.Unmarshal([]byte(s), &rest); err == nil &&
+			rest.Path != "" && strings.HasPrefix(rest.Path, "/") {
+			upper := strings.ToUpper(strings.TrimSpace(rest.Method))
+			switch upper {
+			case http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodHead, "PATCH":
+				return upper, rest.Path, rest.Body, true
+			}
+		}
+		return "", "", nil, false
+	}
+	nl := strings.IndexByte(s, '\n')
+	first := s
+	rest := ""
+	if nl >= 0 {
+		first = s[:nl]
+		rest = strings.TrimSpace(s[nl+1:])
+	}
+	parts := strings.SplitN(strings.TrimSpace(first), " ", 2)
+	if len(parts) != 2 {
+		return "", "", nil, false
+	}
+	upper := strings.ToUpper(parts[0])
+	switch upper {
+	case http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodHead, "PATCH":
+	default:
+		return "", "", nil, false
+	}
+	p := strings.TrimSpace(parts[1])
+	if p == "" || !strings.HasPrefix(p, "/") {
+		return "", "", nil, false
+	}
+	var b any
+	if rest != "" {
+		if err := json.Unmarshal([]byte(rest), &b); err != nil {
+			return "", "", nil, false
+		}
+	}
+	return upper, p, b, true
 }
 
 // namespaceSeparator 返回逻辑库与集合之间的分隔符；显式设置为空表示不做命名空间分组。

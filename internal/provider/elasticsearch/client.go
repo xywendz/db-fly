@@ -9,14 +9,20 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/db-fly/db-fly/internal/domain"
 )
+
+// debugES 控制是否打印每次 Elasticsearch 请求的明细（method / path / body），
+// 用于排查「创建索引 mapping 解析失败」等问题。设置 DBFLY_DEBUG_ES=1 开启。
+var debugES = os.Getenv("DBFLY_DEBUG_ES") == "1"
 
 const (
 	userAgent        = "db-fly"
@@ -31,6 +37,7 @@ type esClient struct {
 	authHeader          string
 	apiVersion          string
 	version             string
+	distribution        string // "elasticsearch" / "opensearch" / 空
 	composableTemplates bool
 	cfg                 domain.ConnectionConfig
 }
@@ -112,10 +119,30 @@ func newClient(cfg domain.ConnectionConfig) (*esClient, error) {
 
 func (c *esClient) Close() { c.http.CloseIdleConnections() }
 
-// setVersion 记录服务端版本，决定索引模板使用组合模板还是 7.7 及以前的旧模板。
-func (c *esClient) setVersion(v string) {
+// setVersion 记录服务端版本与发行版，决定索引模板形态与创建索引是否需要类型包裹。
+func (c *esClient) setVersion(v, dist string) {
 	c.version = v
+	c.distribution = dist
 	c.composableTemplates = versionAtLeast(v, 7, 8)
+}
+
+// majorVersion 返回集群主版本号（如 "6.8.23" -> 6）。无法解析时按 7 处理，
+// 以兼容 OpenSearch 等未携带标准版本号的发行版。
+func (c *esClient) majorVersion() int {
+	parts := strings.SplitN(c.version, ".", 2)
+	if len(parts) == 0 || parts[0] == "" {
+		return 7
+	}
+	n, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 7
+	}
+	return n
+}
+
+// isOpenSearch 标记当前集群为 OpenSearch 发行版（基于 7.10 的 fork，不支持文档类型）。
+func (c *esClient) isOpenSearch() bool {
+	return strings.EqualFold(strings.TrimSpace(c.distribution), "opensearch")
 }
 
 func versionAtLeast(v string, major, minor int) bool {
@@ -222,6 +249,9 @@ func (c *esClient) jsonCall(ctx context.Context, method, path string, body, out 
 			return 0, domain.WrapError(domain.CodeValidation, "es.client", err, "请求体序列化失败")
 		}
 		data, contentType = encoded, "application/json"
+	}
+	if debugES {
+		log.Printf("[es] >>> %s %s body=%s", method, path, string(data))
 	}
 	raw, status, err := c.do(ctx, method, path, data, contentType)
 	if err != nil {

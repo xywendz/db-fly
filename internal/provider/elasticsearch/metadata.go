@@ -175,6 +175,23 @@ func (b *metadataBrowser) ListObjects(ctx context.Context, database, _ string) (
 	return out, nil
 }
 
+// mappingProperties 从 mapping 定义中提取 properties：
+// ES 7+ / OpenSearch 下 mappings.properties 直接展开；
+// ES 5.x/6.x 下 mappings 被类型包裹（doc / _doc / 自定义类型），properties 位于类型之下。
+func mappingProperties(m any) map[string]any {
+	if props := asMap(asMap(m)["properties"]); len(props) > 0 {
+		return props
+	}
+	for _, v := range asMap(m) {
+		if t := asMap(v); t != nil {
+			if props := asMap(t["properties"]); len(props) > 0 {
+				return props
+			}
+		}
+	}
+	return nil
+}
+
 func (b *metadataBrowser) Describe(ctx context.Context, ref domain.ObjectRef) (domain.TableSchema, error) {
 	physical := physicalIndex(b.cfg, ref.Database, ref.Name)
 	if physical == "" {
@@ -193,7 +210,7 @@ func (b *metadataBrowser) Describe(ctx context.Context, ref domain.ObjectRef) (d
 	if err != nil {
 		return result, mapQueryError(err)
 	}
-	properties := asMap(asMap(def["mappings"])["properties"])
+	properties := mappingProperties(def["mappings"])
 	columns := make([]domain.ColumnInfo, 0, maxProjectionColumns)
 	if len(properties) > 0 {
 		columnsFromMappings(properties, "", 0, &columns)

@@ -2,6 +2,7 @@ package elasticsearch
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -9,7 +10,8 @@ import (
 	"github.com/db-fly/db-fly/internal/domain"
 )
 
-// schemaEditor 生成 es_command JSON 脚本（REST 语义由本模块解释），而非 SQL。
+// schemaEditor 生成 Dev-Tools 风格的 Elasticsearch REST 语句（METHOD /path + JSON body），
+// 而非内部 es_command JSON，使预览脚本只含真正的 ES 请求。
 type schemaEditor struct {
 	client *esClient
 	cfg    domain.ConnectionConfig
@@ -23,14 +25,13 @@ func (e *schemaEditor) CreateDatabaseScript(_ context.Context, spec domain.Datab
 	if err != nil {
 		return domain.Script{}, err
 	}
-	create, err := encodeCommand(esCommand{
-		Action: "createDatabase", Database: spec.Name,
-		Options: settingsFromOptions(opts), IfNotExists: spec.IfNotExists,
-	})
+	path := e.client.templatePath(spec.Name)
+	create, err := encDevTools(http.MethodPut, path,
+		templateBody(e.client, spec.Name, settingsFromOptions(opts)))
 	if err != nil {
 		return domain.Script{}, err
 	}
-	rollback, err := encodeCommand(esCommand{Action: "dropDatabase", Database: spec.Name})
+	rollback, err := encDevTools(http.MethodDelete, path, nil)
 	if err != nil {
 		return domain.Script{}, err
 	}
@@ -48,9 +49,8 @@ func (e *schemaEditor) AlterDatabaseScript(_ context.Context, name string, spec 
 	if err != nil {
 		return domain.Script{}, err
 	}
-	stmt, err := encodeCommand(esCommand{
-		Action: "alterDatabase", Database: name, Options: settingsFromOptions(opts),
-	})
+	stmt, err := encDevTools(http.MethodPut, e.client.templatePath(name),
+		templateBody(e.client, name, settingsFromOptions(opts)))
 	if err != nil {
 		return domain.Script{}, err
 	}
@@ -72,17 +72,13 @@ func (e *schemaEditor) CreateTableScript(_ context.Context, def domain.TableDefi
 	if err != nil {
 		return domain.Script{}, err
 	}
-	body := createIndexBody(opts, def.Columns)
-	create, err := encodeCommand(esCommand{
-		Action: "createTable", Database: def.Ref.Database, Collection: def.Ref.Name,
-		Options: body, IfNotExists: def.IfNotExists,
-	})
+	physical := physicalIndex(e.cfg, def.Ref.Database, def.Ref.Name)
+	body := createIndexBody(opts, def.Columns, e.esTypeName())
+	create, err := encDevTools(http.MethodPut, "/"+physical, body)
 	if err != nil {
 		return domain.Script{}, err
 	}
-	rollback, err := encodeCommand(esCommand{
-		Action: "dropObject", Database: def.Ref.Database, Collection: def.Ref.Name,
-	})
+	rollback, err := encDevTools(http.MethodDelete, "/"+physical, nil)
 	if err != nil {
 		return domain.Script{}, err
 	}
@@ -104,7 +100,8 @@ func (e *schemaEditor) AlterTableScript(_ context.Context, ref domain.ObjectRef,
 		if err != nil {
 			return domain.Script{}, err
 		}
-		var cmd esCommand
+		var stmt string
+		physical := physicalIndex(e.cfg, ref.Database, ref.Name)
 		switch ch.Kind {
 		case domain.ChangeAddColumn, domain.ChangeModifyColumn:
 			body := opts
@@ -116,8 +113,9 @@ func (e *schemaEditor) AlterTableScript(_ context.Context, ref domain.ObjectRef,
 				}
 				body = map[string]any{"properties": map[string]any{name: esFieldType(ch.Column.Type)}}
 			}
-			cmd = esCommand{
-				Action: "putMapping", Database: ref.Database, Collection: ref.Name, Options: body,
+			stmt, err = encDevTools(http.MethodPut, "/"+physical+"/_mapping", body)
+			if err != nil {
+				return domain.Script{}, err
 			}
 			warnings = append(warnings, "ES mapping 只允许新增字段或新增子字段，字段类型冲突会被服务端拒绝。")
 		case domain.ChangeTableOptions, domain.ChangeCollectionOpts:
@@ -125,8 +123,9 @@ func (e *schemaEditor) AlterTableScript(_ context.Context, ref domain.ObjectRef,
 				return domain.Script{}, domain.NewError(domain.CodeValidation, "es.script",
 					"修改索引设置需要提供 options JSON")
 			}
-			cmd = esCommand{
-				Action: "putSettings", Database: ref.Database, Collection: ref.Name, Options: opts,
+			stmt, err = encDevTools(http.MethodPut, "/"+physical+"/_settings", opts)
+			if err != nil {
+				return domain.Script{}, err
 			}
 		case domain.ChangeRenameTable:
 			return domain.Script{}, domain.NewError(domain.CodeUnsupported, "es.script",
@@ -138,19 +137,14 @@ func (e *schemaEditor) AlterTableScript(_ context.Context, ref domain.ObjectRef,
 			return domain.Script{}, domain.NewError(domain.CodeUnsupported, "es.script",
 				"Elasticsearch 不支持变更类型 %q", ch.Kind)
 		}
-		stmt, err := encodeCommand(cmd)
-		if err != nil {
-			return domain.Script{}, err
-		}
 		statements = append(statements, stmt)
 	}
 	return commandScript(statements, nil, warnings), nil
 }
 
 func (e *schemaEditor) DropObjectScript(_ context.Context, ref domain.ObjectRef) (domain.Script, error) {
-	stmt, err := encodeCommand(esCommand{
-		Action: "dropObject", Database: ref.Database, Collection: ref.Name,
-	})
+	physical := physicalIndex(e.cfg, ref.Database, ref.Name)
+	stmt, err := encDevTools(http.MethodDelete, "/"+physical, nil)
 	if err != nil {
 		return domain.Script{}, err
 	}
@@ -178,9 +172,26 @@ func (e *schemaEditor) ShowCreate(ctx context.Context, ref domain.ObjectRef) (st
 func (e *schemaEditor) Apply(ctx context.Context, script domain.Script) (domain.ApplyResult, error) {
 	result := domain.ApplyResult{Outcomes: make([]domain.ExecOutcome, 0, len(script.Statements))}
 	for _, text := range script.Statements {
-		cmd, err := decodeCommand(text)
-		if err != nil {
-			return result, err
+		// 兼容三种脚本格式：
+		//  1. 旧版 es_command JSON（含 "action" 键，可能带 database 占位符）；
+		//  2. JSON REST（{"method","path","body"}）；
+		//  3. Dev-Tools 风格（首行 METHOD /path + JSON body）。
+		// 含 "action" 的 JSON 优先按 es_command 解析，以保留 database 占位符信息。
+		trimmed := strings.TrimSpace(text)
+		var cmd esCommand
+		if strings.HasPrefix(trimmed, "{") && strings.Contains(trimmed, `"action"`) {
+			c, err := decodeCommand(text)
+			if err != nil {
+				return result, err
+			}
+			cmd = c
+		} else {
+			method, path, body, isREST := parseDevTools(text)
+			if !isREST {
+				return result, domain.NewError(domain.CodeValidation, "es.script",
+					"无法识别的 Elasticsearch 脚本语句：%s", truncate(text))
+			}
+			cmd = esCommand{Method: method, Path: path, Body: body}
 		}
 		message, err := e.runCommand(ctx, cmd)
 		if err != nil {
@@ -209,11 +220,24 @@ func (e *schemaEditor) runCommand(ctx context.Context, cmd esCommand) (string, e
 		} else if len(cmd.Options) > 0 {
 			body = cmd.Options
 		}
-		status, err := e.client.jsonCall(ctx, method, path, body, nil)
+		// 控制台直接粘贴的 ES7 风格无类型 mappings（PUT /index {mappings:{properties}}）
+		// 在旧版 Elasticsearch（5.x/6.x）上会被误解析成类型名 “properties” 而报错。
+		// 仅对 PUT 创建索引做类型包裹适配，其它请求（搜索/设置等）不受影响。
+		if tn := e.esTypeName(); tn != "" && method == http.MethodPut {
+			body = wrapMappingsType(body, tn)
+		}
+		var resp map[string]any
+		status, err := e.client.jsonCall(ctx, method, path, body, &resp)
 		if err != nil {
 			return "", mapQueryError(err)
 		}
-		return fmt.Sprintf("%s %s 执行成功 (HTTP %d)", method, path, status), nil
+		msg := fmt.Sprintf("%s %s 执行成功 (HTTP %d)", method, path, status)
+		if len(resp) > 0 {
+			if b, e := json.MarshalIndent(resp, "", "  "); e == nil {
+				msg += "\n" + string(b)
+			}
+		}
+		return msg, nil
 	}
 
 	switch cmd.Action {
@@ -261,9 +285,18 @@ func (e *schemaEditor) runCommand(ctx context.Context, cmd esCommand) (string, e
 				return "索引已存在，跳过创建", nil
 			}
 		}
-		body := cmd.Options
+		var body any = cmd.Options
 		if body == nil {
 			body = map[string]any{}
+		}
+		// 不发送 mappings.dynamic：标量 dynamic 会触发 ES 的 class_cast_exception
+		// （见 ES issue #41120），Elasticsearch 默认 dynamic=true。
+		if m, ok := body.(map[string]any)["mappings"].(map[string]any); ok {
+			delete(m, "dynamic")
+		}
+		// 旧版 Elasticsearch（5.x/6.x）需要 mappings 带类型包裹（mappings.doc.properties）。
+		if tn := e.esTypeName(); tn != "" {
+			body = wrapMappingsType(body, tn)
 		}
 		if _, err := e.client.jsonCall(ctx, http.MethodPut, "/"+physical, body, nil); err != nil {
 			return "", mapQueryError(err)
@@ -368,31 +401,183 @@ func settingsFromOptions(opts map[string]any) map[string]any {
 	return settings
 }
 
-func createIndexBody(opts map[string]any, columns []domain.ColumnSpec) map[string]any {
+// esTypeName 返回创建索引时需要的「类型名」：
+//   - ES 7+ / OpenSearch：返回空串，mappings.properties 直接写法即可（无类型）；
+//   - ES 5.x / 6.x：返回 "doc"，需要把字段包进 mappings.doc.properties。
+//
+// 注意：ES 5.x 的 type 名不能以 '_' 开头，所以不能用 '_doc'（ES 6 才把 _doc 设为保留类型），
+// 统一用 "doc" 兼容 5.x 与 6.x。
+// 无连接（如单元测试）时按 ES 7 处理（无类型）。
+func (e *schemaEditor) esTypeName() string {
+	if e.client == nil {
+		return ""
+	}
+	if e.client.isOpenSearch() {
+		return ""
+	}
+	if e.client.majorVersion() < 7 {
+		return "doc"
+	}
+	return ""
+}
+
+// wrapMappingsType 将 ES7 风格的无类型 mappings（mappings.properties）转换为
+// 旧版 Elasticsearch（5.x/6.x）必须的「类型包裹」结构（mappings.<typeName>.properties）。
+// 仅当 body 顶层 mappings 直接含 properties 时生效；已是类型包裹结构
+// （mappings.<type>.properties）的保持原样，避免二次包裹。typeName 为空时原样返回。
+func wrapMappingsType(body any, typeName string) any {
+	if typeName == "" {
+		return body
+	}
+	m, ok := body.(map[string]any)
+	if !ok {
+		return body
+	}
+	mappings, ok := m["mappings"].(map[string]any)
+	if !ok {
+		return body
+	}
+	if _, hasProps := mappings["properties"]; !hasProps {
+		return body
+	}
+	wrapped := map[string]any{}
+	for k, v := range mappings {
+		wrapped[k] = v
+	}
+	m["mappings"] = map[string]any{typeName: wrapped}
+	return body
+}
+
+func createIndexBody(opts map[string]any, columns []domain.ColumnSpec, typeName ...string) map[string]any {
+	tn := ""
+	if len(typeName) > 0 {
+		tn = typeName[0]
+	}
 	body := map[string]any{}
 	settings := settingsFromOptions(opts)
 	if len(settings) == 0 {
 		settings = map[string]any{"number_of_shards": 1, "number_of_replicas": 1}
 	}
 	body["settings"] = settings
-	if mappings := asMap(opts["mappings"]); len(mappings) > 0 {
-		body["mappings"] = mappings
-	} else {
-		mappings := map[string]any{}
-		if dynamic, ok := opts["dynamic"]; ok {
-			mappings["dynamic"] = dynamic
-		}
+
+	mappings := asMap(opts["mappings"])
+	// 不发送 mappings.dynamic：部分 Elasticsearch 版本 / 代理在解析无类型 mappings 时，
+	// 会把顶层标量 dynamic 当成类型名并尝试转为 Map，从而抛出
+	// "Boolean/String cannot be cast to java.util.Map"（见 ES issue #41120）。
+	// Elasticsearch 默认 dynamic=true，与默认行为一致，故省略即可。
+	delete(mappings, "dynamic")
+
+	if len(mappings) == 0 {
+		mappings = map[string]any{}
 		if props := propertiesFromColumns(columns); len(props) > 0 {
 			mappings["properties"] = props
 		}
-		if len(mappings) > 0 {
-			body["mappings"] = mappings
+	} else if props := asMap(mappings["properties"]); len(props) > 0 {
+		// 标准写法：已显式包裹 properties，仅把 "field": "text" 这类字符串值规范化为 {"type":"text"}，
+		// 否则 Elasticsearch 会报 class_cast_exception: String cannot be cast to java.util.Map。
+		mappings["properties"] = normalizeProperties(props)
+	} else if props := inferFieldDefs(mappings); len(props) > 0 {
+		// 高级 mappings 直接写字段定义（无 properties 包裹）时，自动包进 properties，
+		// 否则 Elasticsearch 报 "Root mapping definition has unsupported parameters: [name : ...]"。
+		rest := map[string]any{}
+		for k, v := range mappings {
+			if !isFieldDef(v) {
+				rest[k] = v
+			}
+		}
+		mappings = map[string]any{"properties": normalizeProperties(props)}
+		for k, v := range rest {
+			mappings[k] = v
 		}
 	}
-	if aliases := asMap(opts["aliases"]); len(aliases) > 0 {
+	if len(mappings) > 0 {
+		body["mappings"] = mappings
+	}
+
+	// Elasticsearch 5.x/6.x 的 mappings 必须是「类型包裹」结构：mappings.<type>.properties。
+	// 7+ 与 OpenSearch 支持无类型的 mappings.properties 直接写法。typeName 为空表示无需包裹。
+	if tn != "" {
+		if m, ok := body["mappings"].(map[string]any); ok {
+			body["mappings"] = map[string]any{tn: m}
+		}
+	}
+
+	if aliases := normalizeAliases(opts["aliases"]); len(aliases) > 0 {
 		body["aliases"] = aliases
 	}
 	return body
+}
+
+// normalizeProperties 把属性表规范化为 ES 接受的形式：把 "field": "text" 这类字符串值
+// 转为 {"type":"text"}，否则 ES 会报 class_cast_exception: String cannot be cast to java.util.Map。
+func normalizeProperties(props map[string]any) map[string]any {
+	normalized := make(map[string]any, len(props))
+	for name, def := range props {
+		if s, ok := def.(string); ok {
+			normalized[name] = map[string]any{"type": s}
+		} else {
+			normalized[name] = def
+		}
+	}
+	return normalized
+}
+
+// inferFieldDefs 从 mappings 顶层挑出“字段定义”条目（含 type/properties/fields 的映射），
+// 用于把“直接写字段、未包 properties”的高级 mappings 自动包进 properties。
+func inferFieldDefs(m map[string]any) map[string]any {
+	props := make(map[string]any, len(m))
+	for k, v := range m {
+		if isFieldDef(v) {
+			props[k] = v
+		}
+	}
+	return props
+}
+
+// isFieldDef 判断一个值是否像 ES 字段定义：可以是 "text" 这类字符串简写，
+// 或含 type/properties/fields 的对象。
+func isFieldDef(v any) bool {
+	switch t := v.(type) {
+	case string:
+		return true
+	case map[string]any:
+		if _, has := t["type"]; has {
+			return true
+		}
+		if _, has := t["properties"]; has {
+			return true
+		}
+		if _, has := t["fields"]; has {
+			return true
+		}
+		return false
+	default:
+		return false
+	}
+}
+
+// normalizeAliases 把别名定义规范化为对象：ES 8.x 已移除字符串形式的别名，
+// 必须为 {"aliasName": {}} 结构，否则报 class_cast_exception。
+func normalizeAliases(v any) map[string]any {
+	switch t := v.(type) {
+	case map[string]any:
+		return t
+	case string:
+		if s := strings.TrimSpace(t); s != "" {
+			return map[string]any{s: map[string]any{}}
+		}
+	case []any:
+		out := make(map[string]any, len(t))
+		for _, item := range t {
+			if s, ok := item.(string); ok {
+				if s = strings.TrimSpace(s); s != "" {
+					out[s] = map[string]any{}
+				}
+			}
+		}
+		return out
+	}
+	return nil
 }
 
 func templateBody(c *esClient, db string, opts map[string]any) map[string]any {
@@ -400,29 +585,41 @@ func templateBody(c *esClient, db string, opts map[string]any) map[string]any {
 	mappings := asMap(opts["mappings"])
 	aliases := asMap(opts["aliases"])
 	pattern := db + namespaceSeparator(c.cfg) + "*"
-	template := map[string]any{}
-	if len(settings) > 0 {
-		template["settings"] = settings
-	}
-	if len(mappings) > 0 {
-		template["mappings"] = mappings
-	}
-	if len(aliases) > 0 {
-		template["aliases"] = aliases
-	}
 	out := map[string]any{
 		"index_patterns": []any{pattern},
 		"priority":       100,
 		"_meta":          map[string]any{"managed_by": userAgent, "database": db},
 	}
 	if c.composableTemplates {
+		// 组合模板要求 template 字段存在且非空（至少含 settings），
+		// 否则 Elasticsearch 报 "template is missing"。
+		template := map[string]any{}
+		if len(settings) > 0 {
+			template["settings"] = settings
+		} else {
+			template["settings"] = map[string]any{}
+		}
+		if len(mappings) > 0 {
+			template["mappings"] = mappings
+		}
+		if len(aliases) > 0 {
+			template["aliases"] = aliases
+		}
 		out["template"] = template
 		return out
 	}
-	// 7.7 及以前使用 legacy template：settings/mappings 位于顶层。
-	for k, v := range template {
-		out[k] = v
+	// 7.7 及以前使用 legacy template：settings/mappings 位于顶层，
+	// 且必须提供（可为空的）组件模板列表，否则同样报 "template is missing"。
+	if len(settings) > 0 {
+		out["settings"] = settings
+	}
+	if len(mappings) > 0 {
+		out["mappings"] = mappings
+	}
+	if len(aliases) > 0 {
+		out["aliases"] = aliases
 	}
 	out["order"] = 100
+	out["template"] = []any{}
 	return out
 }

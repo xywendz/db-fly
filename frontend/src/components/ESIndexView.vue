@@ -16,7 +16,6 @@ const name = ref(initialName);
 const shards = ref(1);
 const replicas = ref(1);
 const refreshInterval = ref("1s");
-const dynamic = ref<"true" | "false" | "strict">("true");
 const aliasesText = ref("");
 const advancedSettings = ref("");
 const advancedMappings = ref("");
@@ -56,7 +55,6 @@ function buildOptions(): Record<string, any> {
   const options: Record<string, any> = {
     number_of_shards: Number(shards.value) || 1,
     number_of_replicas: Number(replicas.value) || 0,
-    dynamic: dynamic.value,
   };
   if (refreshInterval.value.trim()) options.refresh_interval = refreshInterval.value.trim();
   const settings = parseJSONObject(advancedSettings.value, "高级 settings");
@@ -99,7 +97,7 @@ async function apply() {
   if (!script.value) return;
   const ok = await store.confirm({
     title: "创建 Elasticsearch 索引",
-    message: `将在连接「${props.tab.conn}」上创建索引 ${physical.value}。请先核对下方 es_command 脚本。`,
+    message: `将在连接「${props.tab.conn}」上创建索引 ${physical.value}。请先核对下方 Elasticsearch 请求。`,
     confirmText: "执行脚本",
   });
   if (!ok) return;
@@ -116,6 +114,33 @@ async function apply() {
     error.value = e?.message ?? String(e);
   } finally {
     busy.value = false;
+  }
+}
+
+async function copyScript() {
+  const text = script.value?.statements.join("\n") ?? "";
+  if (!text) {
+    store.setStatus("暂无可复制的脚本", "warn");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    store.notify("脚本已复制到剪贴板", "ok", 1800);
+  } catch {
+    store.setStatus("剪贴板不可用", "warn");
+  }
+}
+
+async function copyDefinition() {
+  if (!definition.value) {
+    store.setStatus("暂无可复制的脚本", "warn");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(definition.value);
+    store.notify("脚本已复制到剪贴板", "ok", 1800);
+  } catch {
+    store.setStatus("剪贴板不可用", "warn");
   }
 }
 
@@ -174,14 +199,6 @@ onMounted(async () => {
               <input v-model="refreshInterval" placeholder="1s；大批量导入可用 -1" />
             </div>
             <div class="field">
-              <label class="field-label">dynamic 策略</label>
-              <select v-model="dynamic">
-                <option value="true">true · 自动新增字段</option>
-                <option value="false">false · 忽略未知字段</option>
-                <option value="strict">strict · 未知字段报错</option>
-              </select>
-            </div>
-            <div class="field">
               <label class="field-label">别名（逗号分隔）</label>
               <input v-model="aliasesText" placeholder="如 users_current, users_read" />
             </div>
@@ -220,8 +237,8 @@ onMounted(async () => {
               <textarea v-model="advancedSettings" class="mono" rows="5" placeholder='{"analysis":{"analyzer":{...}}}'></textarea>
             </div>
             <div class="field">
-              <label class="field-label">完整 mappings JSON（覆盖字段列表）</label>
-              <textarea v-model="advancedMappings" class="mono" rows="5" placeholder='{"properties":{"title":{"type":"text"}}}'></textarea>
+              <label class="field-label">完整 mappings JSON（覆盖字段列表；字段可直接写，无需包 properties）</label>
+              <textarea v-model="advancedMappings" class="mono" rows="5" placeholder='{"title":{"type":"text"}} 或 {"properties":{"title":{"type":"text"}}}'></textarea>
             </div>
           </div>
         </div>
@@ -237,10 +254,13 @@ onMounted(async () => {
             <button class="btn btn-sm btn-primary" :disabled="busy || !script" @click="apply">
               <Icon name="check" :size="12" /> 确认执行
             </button>
+            <button class="btn btn-sm" :disabled="!script" @click="copyScript">
+              <Icon name="copy" :size="12" /> 复制
+            </button>
           </div>
           <div class="card-body col" style="gap: 8px">
             <div v-if="!script" class="field-hint">
-              先生成 <code>es_command</code> 脚本并核对 settings / mappings，再确认执行。执行前会二次确认。
+              先生成 Elasticsearch 请求（PUT /索引 + settings / mappings）并核对，再确认执行。执行前会二次确认。
             </div>
             <template v-else>
               <div v-if="script.warnings?.length" class="alert alert-warn">
@@ -258,12 +278,17 @@ onMounted(async () => {
 
       <template v-else>
         <div class="card">
-          <div class="card-head"><Icon name="code" :size="14" /><h4>索引定义（可回放的 PUT 脚本）</h4></div>
+          <div class="card-head"><Icon name="code" :size="14" /><h4>索引定义（可回放的 PUT 脚本）</h4>
+            <span class="grow"></span>
+            <button class="btn btn-sm" :disabled="!definition" @click="copyDefinition">
+              <Icon name="copy" :size="12" /> 复制
+            </button>
+          </div>
           <div class="card-body">
             <pre class="mono script-preview">{{ definition || "正在读取…" }}</pre>
             <div class="alert alert-info">
               <Icon name="info" :size="14" />
-              <span>新增字段请用「结构」页或执行 <code>es_command</code> 的 putMapping；ES 不允许修改已有字段类型。</span>
+              <span>新增字段请用「结构」页或执行 <code>PUT /&lt;索引&gt;/_mapping</code>；ES 不允许修改已有字段类型。</span>
             </div>
           </div>
         </div>

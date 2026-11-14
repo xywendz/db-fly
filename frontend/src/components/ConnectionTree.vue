@@ -398,10 +398,18 @@ async function dropDatabase(conn: string, db: string) {
   await refreshConn(conn);
 }
 
+/** 连接节点的主要“+”动作：ES 没有数据库，直接打开索引设计器；其余类型走新建数据库。 */
+function connPrimaryAction(c: ConnectionConfig) {
+	if (connKind(c.name) === "elasticsearch") {
+		store.openESIndexTab(c.name, "default", "");
+	} else {
+		createDatabase(c.name);
+	}
+}
+
 /** 新增数据库：名称 + 可选字符集 → 方言脚本预览 → 确认执行。 */
 async function createDatabase(conn: string) {
-  if (connKind(conn) === "elasticsearch") return createESDatabase(conn);
-  const name = await store.promptText({
+	const name = await store.promptText({
     title: "新增数据库",
     message: "输入新数据库名称，下一步可指定字符集与排序规则。",
     label: "数据库名",
@@ -431,45 +439,6 @@ async function createDatabase(conn: string) {
     if (done) await refreshConn(conn);
   } catch (e: any) {
     store.setStatus(`新增数据库失败：${e?.message ?? e}`, "error");
-  }
-}
-
-/**
- * Elasticsearch「逻辑库」= 组合索引模板（dbfly_<db>），索引模式 <db>.*。
- * 只影响后续新建索引，不会创建空索引，也不会改动已有索引。
- */
-async function createESDatabase(conn: string) {
-  const name = await store.promptText({
-    title: "新建逻辑库（索引模板）",
-    message: "Elasticsearch 没有空数据库：将创建组合索引模板 dbfly_<名称>，索引模式 <名称>.*，仅影响之后新建的索引。",
-    label: "数据库名",
-    placeholder: "如 shop",
-    confirmText: "下一步",
-  });
-  if (!name) return;
-  const opts = await store.promptText({
-    title: `索引模板 ${name.trim()} 的默认设置`,
-    message: "格式：主分片数/副本数，例如 1/1；填「默认」表示 1/1。",
-    label: "分片 / 副本",
-    value: "默认",
-    confirmText: "预览脚本",
-  });
-  if (!opts) return;
-  const [s, r] = opts.trim() === "默认" ? [] : opts.split("/").map((x) => x.trim());
-  const options = JSON.stringify({
-    ...(s ? { number_of_shards: Number(s) || 1 } : {}),
-    ...(r ? { number_of_replicas: Number(r) || 0 } : {}),
-  });
-  try {
-    const script = await api.previewCreateDatabase(conn, {
-      name: name.trim(), options, if_not_exists: true,
-    });
-    const done = await applyScriptWithConfirm(conn, script, {
-      title: `新建逻辑库 ${name.trim()}`, confirmText: "创建模板",
-    });
-    if (done) await refreshConn(conn);
-  } catch (e: any) {
-    store.setStatus(`新建逻辑库失败：${e?.message ?? e}`, "error");
   }
 }
 
@@ -510,13 +479,14 @@ async function menuConn(e: MouseEvent, c: ConnectionConfig) {
     { separator: true },
   ];
   if (kind === "redis") {
-    items.push({ label: "新建数据库", icon: "database", action: () => promptRedisDb(c.name) });
+  	items.push({ label: "新建数据库", icon: "database", action: () => promptRedisDb(c.name) });
+  } else if (kind === "elasticsearch") {
+  	// Elasticsearch 没有数据库概念：连接右键直接创建索引，而非新建逻辑库（索引模板）。
+  	items.push({ label: "新建索引", icon: "search", action: () => store.openESIndexTab(c.name, "default", "") });
+  } else if (kind === "mongodb") {
+  	items.push({ label: "新建数据库", icon: "database", action: () => createDatabase(c.name) });
   } else {
-    items.push({
-      label: kind === "elasticsearch" ? "新建逻辑库 (索引模板)" : kind === "mongodb" ? "新建数据库" : "新增数据库",
-      icon: "database",
-      action: () => createDatabase(c.name),
-    });
+  	items.push({ label: "新增数据库", icon: "database", action: () => createDatabase(c.name) });
   }
   items.push(
     { label: "导入数据", icon: "upload", action: () => store.openImportTab(c.name, db, "") },
@@ -746,7 +716,9 @@ function objIcon(o: ObjectInfo) {
           <span class="label" :title="c.name">{{ c.name }}</span>
           <span class="badge" :class="kindBadge[c.kind]">{{ c.kind }}</span>
           <span class="node-actions">
-            <button class="btn-icon" style="width: 20px; height: 20px" title="新建数据库" @click.stop="createDatabase(c.name)">
+            <button class="btn-icon" style="width: 20px; height: 20px"
+              :title="connKind(c.name) === 'elasticsearch' ? '新建索引' : '新建数据库'"
+              @click.stop="connPrimaryAction(c)">
               <Icon name="plus" :size="13" />
             </button>
             <button class="btn-icon" style="width: 20px; height: 20px" title="新建查询" @click.stop="store.openQueryTab(c.name)">

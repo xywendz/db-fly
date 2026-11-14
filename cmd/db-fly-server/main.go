@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -20,6 +21,7 @@ import (
 	"github.com/db-fly/db-fly/internal/auth"
 	"github.com/db-fly/db-fly/internal/bridge"
 	"github.com/db-fly/db-fly/internal/httpapi"
+	"github.com/db-fly/db-fly/internal/platform/logging"
 	"github.com/db-fly/db-fly/internal/webui"
 	// 注册全部数据库业务模块（各自 init() 自注册到 provider 注册中心）。
 	_ "github.com/db-fly/db-fly/internal/provider/all"
@@ -33,7 +35,23 @@ func main() {
 	signup := flag.Bool("allow-signup", envBool("DB_FLY_ALLOW_SIGNUP", true), "是否开放用户注册")
 	invite := flag.String("invite", env("DB_FLY_WEB_TOKEN", ""), "注册邀请码（可选；公网建议设置）")
 	uploadDir := flag.String("upload-dir", env("DB_FLY_UPLOAD_DIR", ""), "导入文件暂存根目录（默认各用户目录内 uploads/）")
+	logBase := flag.String("log-dir", env("DB_FLY_LOG_DIR", ""), "日志根目录（默认可执行文件所在目录；实际写入其中 logs/ 子目录）")
 	flag.Parse()
+
+	// 初始化日志：在「运行目录/logs」下输出标准日志与数据库操作审计日志。
+	loggingBase := *logBase
+	if loggingBase == "" {
+		if exe, e := os.Executable(); e == nil {
+			loggingBase = filepath.Dir(exe)
+		}
+	}
+	auditLogger, closeLog, logErr := logging.Setup(loggingBase)
+	if logErr != nil {
+		log.Printf("初始化日志失败: %v", logErr)
+		return
+	}
+	defer closeLog()
+	log.Printf("日志目录: %s/logs", loggingBase)
 
 	// 对外监听且未指定邀请码时自动生成，避免公网被任意注册。
 	if !isLoopback(*addr) && *invite == "" {
@@ -54,7 +72,8 @@ func main() {
 		UploadDir:   *uploadDir,
 		AllowSignup: *signup,
 		SignupCode:  *invite,
-		SessionTTL:  12 * time.Hour,
+		SessionTTL:  7 * 24 * time.Hour,
+		Audit:       auditLogger,
 	})
 	if err != nil {
 		log.Printf("初始化多用户管理器失败: %v", err)

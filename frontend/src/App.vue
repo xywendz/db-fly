@@ -23,6 +23,7 @@ import RedisKeysView from "./components/RedisKeysView.vue";
 import RedisKeyView from "./components/RedisKeyView.vue";
 import MongoCollectionView from "./components/MongoCollectionView.vue";
 import ESIndexView from "./components/ESIndexView.vue";
+import ESConsoleView from "./components/ESConsoleView.vue";
 import ConnectionDialog from "./components/ConnectionDialog.vue";
 import HistoryPanel from "./components/HistoryPanel.vue";
 import FavoritesPanel from "./components/FavoritesPanel.vue";
@@ -38,6 +39,11 @@ const tabMenu = ref({ open: false, x: 0, y: 0, items: [] as MenuItem[] });
 const dragging = ref<"left" | "right" | null>(null);
 
 const activeTab = computed(() => store.activeTab);
+// Elasticsearch 没有数据库/表概念，查询使用专用控制台（method + 索引/action 路径 + DSL body），
+// 而非通用 SQL 查询页。
+const activeIsES = computed(
+  () => !!activeTab.value && store.connections.find((c) => c.name === activeTab.value!.conn)?.kind === "elasticsearch"
+);
 const firstDb = computed(() => {
   const c = store.activeConn || store.connections[0]?.name;
   return store.activeDb || (store.dbCache[c || ""] || [])[0]?.name || "";
@@ -217,7 +223,8 @@ onUnmounted(() => {
 
         <div class="content grow">
           <KeepAlive :max="12">
-            <QueryView v-if="activeTab && activeTab.type === 'query'" :key="activeTab.id" :tab="activeTab" />
+            <ESConsoleView v-if="activeTab && activeTab.type === 'query' && activeIsES" :key="activeTab.id" :tab="activeTab" />
+            <QueryView v-else-if="activeTab && activeTab.type === 'query'" :key="activeTab.id" :tab="activeTab" />
             <TableDataView v-else-if="activeTab && activeTab.type === 'data'" :key="activeTab.id" :tab="activeTab" />
             <StructureView v-else-if="activeTab && activeTab.type === 'structure'" :key="activeTab.id" :tab="activeTab" />
             <TableDesignerView v-else-if="activeTab && activeTab.type === 'designer'" :key="activeTab.id" :tab="activeTab" />

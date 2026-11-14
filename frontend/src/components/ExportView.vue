@@ -99,6 +99,8 @@ watch(connName, () => {
   dbContent.value = "";
   outcome.value = null;
   redisContent.value = "";
+  // 确保数据库下拉框有可选项（与表名下拉框行为一致）。
+  if (connName.value) store.loadDatabases(connName.value).catch(() => {});
 }, { immediate: true });
 
 watch([source, exportMode, tableName], () => { ddl.value = ""; });
@@ -437,8 +439,10 @@ async function copy() {
             </div>
             <div class="field">
               <label class="field-label">数据库</label>
-              <input v-model="dbName" list="export-db" placeholder="数据库名" />
-              <datalist id="export-db"><option v-for="d in databases" :key="d.name" :value="d.name"></option></datalist>
+              <select v-model="dbName">
+                <option value="">请选择数据库</option>
+                <option v-for="d in databases" :key="d.name" :value="d.name">{{ d.name }}</option>
+              </select>
             </div>
             <div class="field">
               <label class="field-label">每表最多行数</label>

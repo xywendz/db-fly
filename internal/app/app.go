@@ -23,6 +23,9 @@ type App struct {
 	Config  config.Store
 	Secrets credential.Store
 	Audit   audit.Logger
+	// Owner 标识该内核的归属用户（Web 多用户模式下由 auth.Manager 注入），
+	// 用于审计日志追溯到具体账号；本地/GUI 模式为空。
+	Owner string
 
 	mu       sync.Mutex
 	cfgMu    sync.Mutex
@@ -43,6 +46,22 @@ func (a *App) mutateConfig(fn func(*config.Config) error) error {
 	return a.Config.Save(cfg)
 }
 
+// ownerAudit 在记录审计日志时自动补上操作归属人（App.Owner），
+// 使数据库操作日志可追溯到具体账号，无需在每个调用点重复设置。
+type ownerAudit struct {
+	inner audit.Logger
+	app   *App
+}
+
+func (o *ownerAudit) Path() string { return o.inner.Path() }
+
+func (o *ownerAudit) Log(e audit.Entry) {
+	if o.app != nil && o.app.Owner != "" {
+		e.Owner = o.app.Owner
+	}
+	o.inner.Log(e)
+}
+
 // New 创建业务内核。
 func New(cfg config.Store, secrets credential.Store, logs audit.Logger) *App {
 	if logs == nil {
@@ -51,12 +70,15 @@ func New(cfg config.Store, secrets credential.Store, logs audit.Logger) *App {
 	if secrets == nil {
 		secrets = nopSecrets{}
 	}
-	return &App{
+	a := &App{
 		Config:   cfg,
 		Secrets:  secrets,
 		Audit:    logs,
 		sessions: make(map[string]domain.Session),
 	}
+	// 用归属人注入器包裹真实日志器（Nop 也无害），使审计记录自动带 owner。
+	a.Audit = &ownerAudit{inner: logs, app: a}
+	return a
 }
 
 // NewID 生成一个本地唯一 ID。

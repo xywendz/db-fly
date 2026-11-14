@@ -11,6 +11,7 @@ import (
 
 	"github.com/db-fly/db-fly/internal/app"
 	"github.com/db-fly/db-fly/internal/bootstrap"
+	"github.com/db-fly/db-fly/internal/platform/audit"
 	"github.com/db-fly/db-fly/internal/platform/config"
 )
 
@@ -21,6 +22,9 @@ type Options struct {
 	AllowSignup bool
 	SignupCode  string // 注册邀请码，为空表示不限制
 	SessionTTL  time.Duration
+	// Audit 是审计/数据库操作日志器；为空时各用户运行时按自身数据目录生成日志。
+	// 若提供（通常由入口统一配置到「运行目录/logs」），则所有用户的操作日志集中写入同一处。
+	Audit audit.Logger
 }
 
 // Runtime 是某个登录用户的完整运行时：独立业务内核 + 独立数据/上传目录。
@@ -39,6 +43,7 @@ type Manager struct {
 	signupCode                     string
 	store                          *Store
 	sessions                       *Sessions
+	audit                          audit.Logger // 可能为 nil（按用户各自目录记日志）
 	mu                             sync.Mutex
 	runtimes                       map[string]*Runtime
 }
@@ -67,7 +72,7 @@ func New(opt Options) (*Manager, error) {
 	return &Manager{
 		root: abs, usersDir: usersDir, uploadOverride: opt.UploadDir,
 		allowSignup: opt.AllowSignup, signupCode: opt.SignupCode,
-		store: store, sessions: NewSessions(opt.SessionTTL),
+		store: store, sessions: NewSessions(opt.SessionTTL), audit: opt.Audit,
 		runtimes: make(map[string]*Runtime),
 	}, nil
 }
@@ -113,6 +118,9 @@ func (m *Manager) Login(username, password string) (*User, string, error) {
 
 func (m *Manager) Logout(token string) { m.sessions.Delete(token) }
 
+// Refresh 顺延会话过期时间（滑动过期），由每次有效访问时调用。
+func (m *Manager) Refresh(token string) { m.sessions.Touch(token) }
+
 // UserByToken 由会话 token 解析当前用户。
 func (m *Manager) UserByToken(token string) (*User, error) {
 	id, ok := m.sessions.UserID(token)
@@ -137,7 +145,16 @@ func (m *Manager) RuntimeFor(userID string) (*Runtime, error) {
 		return nil, err
 	}
 	dir := filepath.Join(m.usersDir, userID)
-	base, err := bootstrap.New(dir)
+	// 统一审计日志（入口配置的 logs/audit.log）优先；否则回退到各用户目录内日志。
+	var logger audit.Logger
+	if m.audit != nil {
+		logger = m.audit
+	} else if l, lerr := audit.New(dir); lerr == nil {
+		logger = l
+	} else {
+		logger = audit.Nop{}
+	}
+	base, err := bootstrap.New(dir, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -152,6 +169,10 @@ func (m *Manager) RuntimeFor(userID string) (*Runtime, error) {
 	rt := &Runtime{
 		User: u, App: base.App,
 		DataDir: base.DataDir, SecretsName: base.SecretsName, UploadDir: uploadDir,
+	}
+	// 记录操作归属人，使审计日志可追溯到具体用户。
+	if base.App != nil {
+		base.App.Owner = u.Username
 	}
 	m.runtimes[userID] = rt
 	return rt, nil

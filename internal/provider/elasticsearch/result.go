@@ -23,7 +23,9 @@ type esResultSet struct {
 	err      error
 }
 
-func newESResultSet(resp map[string]any, index string) (domain.ResultSet, error) {
+// overrideCols 非空时（来自索引 mapping 定义）优先作为结果集列头，缺失字段的文档以 NULL 展示，
+// 保证列头稳定；为空时回退到按命中文档推断（兼容通配 / 多索引等无法映射到单一 mapping 的查询）。
+func newESResultSet(resp map[string]any, index string, overrideCols []domain.Column) (domain.ResultSet, error) {
 	hits := asMap(resp["hits"])
 	hitList := toSlice(hits["hits"])
 	docs := make([]map[string]any, 0, len(hitList))
@@ -36,10 +38,21 @@ func newESResultSet(resp map[string]any, index string) (domain.ResultSet, error)
 		docs = append(docs, doc)
 		docTexts = append(docTexts, text)
 	}
-	paths := []string{"_id"}
-	seen := map[string]bool{"_id": true}
-	for i := 0; i < len(docs) && i < sampleDocuments; i++ {
-		flattenPaths(docs[i], "", 0, &paths, seen)
+	var paths []string
+	if len(overrideCols) > 0 {
+		paths = make([]string, len(overrideCols))
+		for i, c := range overrideCols {
+			paths[i] = c.Name
+		}
+	} else {
+		paths = []string{"_id"}
+		seen := map[string]bool{"_id": true}
+		for i := 0; i < len(docs) && i < sampleDocuments; i++ {
+			flattenPaths(docs[i], "", 0, &paths, seen)
+		}
+	}
+	if len(paths) == 0 {
+		paths = []string{"_id"}
 	}
 	columns := make([]domain.Column, len(paths))
 	for i, path := range paths {

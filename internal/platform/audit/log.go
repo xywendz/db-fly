@@ -15,6 +15,7 @@ import (
 // Entry 是一条审计记录。
 type Entry struct {
 	Time       time.Time `json:"time"`
+	Owner      string    `json:"owner,omitempty"` // 执行操作的账号（Web 多用户模式）
 	Connection string    `json:"connection"`
 	Kind       string    `json:"kind"`
 	Action     string    `json:"action"`

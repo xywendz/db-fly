@@ -252,6 +252,23 @@ func (e *queryExecutor) Execute(ctx context.Context, q domain.Query) (domain.Res
 		return nil, domain.NewError(domain.CodeUnsupported, "es.query",
 			"Elasticsearch 模块只支持 JSON DSL，收到 %q", q.Language)
 	}
+	text := strings.TrimSpace(q.Text)
+	// 支持在查询页直接执行 Dev-Tools 风格 REST 命令（如 PUT /index {...}）：
+	// 这类命令以 HTTP 方法开头，不应按 _search DSL 处理，否则会被误发到 /_search 而无响应。
+	if !strings.HasPrefix(text, "{") {
+		if method, _, _, ok := parseDevTools(text); ok && method != "" {
+			res, err := e.Exec(ctx, text, q.Database)
+			if err != nil {
+				return nil, err
+			}
+			doc := map[string]any{
+				"command": res.Statement,
+				"result":  res.Message,
+			}
+			encoded, _ := json.MarshalIndent(doc, "", "  ")
+			return newSingleDocResultSet(string(encoded)), nil
+		}
+	}
 	spec, err := parseSearchSpec(q, e.cfg)
 	if err != nil {
 		return nil, err
@@ -261,7 +278,32 @@ func (e *queryExecutor) Execute(ctx context.Context, q domain.Query) (domain.Res
 		"/"+spec.Index+"/_search", spec.Body, &resp); err != nil {
 		return nil, mapQueryError(err)
 	}
-	return newESResultSet(resp, spec.Index)
+	cols := e.mappingColumns(ctx, spec.Index)
+	return newESResultSet(resp, spec.Index, cols)
+}
+
+// mappingColumns 读取索引 mapping 定义，返回用于结果集列头的有序字段（_id 在前）。
+// 仅对明确的单索引生效；通配 / 多索引等无法映射到单一 mapping 时返回 nil（回退到按文档推断）。
+func (e *queryExecutor) mappingColumns(ctx context.Context, index string) []domain.Column {
+	if index == "" || strings.ContainsAny(index, "*,") || strings.Contains(index, "/") {
+		return nil
+	}
+	var raw map[string]any
+	if _, err := e.client.jsonCall(ctx, http.MethodGet, "/"+index+"/_mapping", nil, &raw); err != nil {
+		return nil
+	}
+	props := mappingProperties(asMap(asMap(asMap(raw)[index])["mappings"]))
+	if len(props) == 0 {
+		return nil
+	}
+	var ci []domain.ColumnInfo
+	columnsFromMappings(props, "", 0, &ci)
+	cols := make([]domain.Column, 0, len(ci)+1)
+	cols = append(cols, domain.Column{Name: "_id", Type: "keyword"})
+	for _, c := range ci {
+		cols = append(cols, domain.Column{Name: c.Name, Type: c.DataType})
+	}
+	return cols
 }
 
 func (e *queryExecutor) Explain(ctx context.Context, q domain.Query) (domain.ResultSet, error) {
@@ -306,8 +348,29 @@ func (e *queryExecutor) Explain(ctx context.Context, q domain.Query) (domain.Res
 // REST 命令形如 {"method":"PUT","path":"/{index}/_settings","body":{...}}，
 // path 中的 {index}/{database} 会由 database 参数替换。
 func (e *queryExecutor) Exec(ctx context.Context, statement, database string) (domain.ExecResult, error) {
+	text := strings.TrimSpace(statement)
+	// Dev-Tools 风格：首行 METHOD /path，其余为可选 JSON body（如 "PUT /index\n{...}"）。
+	if !strings.HasPrefix(text, "{") {
+		method, _, _, ok := parseDevTools(text)
+		if !ok || method == "" {
+			return domain.ExecResult{}, domain.NewError(domain.CodeValidation, "es.exec",
+				"无法识别的命令：需为 JSON 对象（{method,path,body} / {action,...}）或 Dev-Tools 风格（PUT /path {json}）")
+		}
+		res, err := (&schemaEditor{client: e.client, cfg: e.cfg}).Apply(ctx, domain.Script{
+			Format: scriptFormat, Statements: []string{text},
+		})
+		if err != nil {
+			return domain.ExecResult{}, err
+		}
+		message := "Elasticsearch 命令执行成功"
+		if len(res.Outcomes) > 0 {
+			message = res.Outcomes[0].Message
+		}
+		return domain.ExecResult{Statement: truncate(statement), Message: message}, nil
+	}
+	// 原有 JSON-REST / es_command 路径
 	var raw map[string]any
-	if err := json.Unmarshal([]byte(strings.TrimSpace(statement)), &raw); err != nil {
+	if err := json.Unmarshal([]byte(text), &raw); err != nil {
 		return domain.ExecResult{}, domain.WrapError(domain.CodeValidation, "es.exec", err,
 			"原生命令必须是 JSON 对象")
 	}
@@ -323,7 +386,7 @@ func (e *queryExecutor) Exec(ctx context.Context, statement, database string) (d
 	if cmd.Database == "" {
 		cmd.Database = database
 	}
-	text, err := encodeCommand(cmd)
+	text, err = encodeCommand(cmd)
 	if err != nil {
 		return domain.ExecResult{}, err
 	}
