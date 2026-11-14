@@ -110,7 +110,7 @@ func (c *cli) dataEmptyCmd() *cobra.Command {
 
 // scriptComment 返回脚本预览使用的注释前缀。
 func scriptComment(format string) string {
-	if format == "mongo_command" {
+	if format == "mongo_command" || format == "es_command" {
 		return "//"
 	}
 	if strings.Contains(format, "redis") {

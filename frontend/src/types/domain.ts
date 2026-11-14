@@ -8,7 +8,8 @@ export type Kind =
   | "postgresql"
   | "oracle"
   | "sqlite"
-  | "redis";
+  | "redis"
+  | "elasticsearch";
 
 export type ObjectType = "table" | "view" | "collection" | "key";
 
@@ -32,7 +33,8 @@ export type Capability =
   | "show_create"
   | "truncate_table"
   | "empty_table"
-  | "key_values";
+  | "key_values"
+  | "es_dsl";
 
 export interface ConnectionConfig {
   id: string;
@@ -201,6 +203,8 @@ export interface TableDefinition {
   charset?: string;
   collation?: string;
   comment?: string;
+  /** 与方言无关的 JSON 选项（ES 的 settings/mappings/aliases）。 */
+  options?: string;
   if_not_exists?: boolean;
 }
 
@@ -208,6 +212,8 @@ export interface DatabaseSpec {
   name: string;
   charset?: string;
   collation?: string;
+  /** 与方言无关的 JSON 选项（ES 索引模板默认 settings）。 */
+  options?: string;
   if_not_exists?: boolean;
 }
 
@@ -234,6 +240,8 @@ export interface SchemaChange {
   collation?: string;
   comment?: string;
   validator?: string;
+  /** 与方言无关的 JSON 选项（ES 的 mapping/settings 变更）。 */
+  options?: string;
 }
 
 export interface Script {

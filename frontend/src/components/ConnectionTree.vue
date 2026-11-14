@@ -226,7 +226,7 @@ function quoteIdent(name: string, kind: string) {
   return `\`${name.replace(/`/g, "``")}\``;
 }
 function relational(kind: string) {
-  return !["mongodb", "redis"].includes(kind);
+  return !["mongodb", "redis", "elasticsearch"].includes(kind);
 }
 
 async function copyTable(conn: string, db: string, o: ObjectInfo, withData: boolean) {
@@ -400,6 +400,7 @@ async function dropDatabase(conn: string, db: string) {
 
 /** 新增数据库：名称 + 可选字符集 → 方言脚本预览 → 确认执行。 */
 async function createDatabase(conn: string) {
+  if (connKind(conn) === "elasticsearch") return createESDatabase(conn);
   const name = await store.promptText({
     title: "新增数据库",
     message: "输入新数据库名称，下一步可指定字符集与排序规则。",
@@ -430,6 +431,45 @@ async function createDatabase(conn: string) {
     if (done) await refreshConn(conn);
   } catch (e: any) {
     store.setStatus(`新增数据库失败：${e?.message ?? e}`, "error");
+  }
+}
+
+/**
+ * Elasticsearch「逻辑库」= 组合索引模板（dbfly_<db>），索引模式 <db>.*。
+ * 只影响后续新建索引，不会创建空索引，也不会改动已有索引。
+ */
+async function createESDatabase(conn: string) {
+  const name = await store.promptText({
+    title: "新建逻辑库（索引模板）",
+    message: "Elasticsearch 没有空数据库：将创建组合索引模板 dbfly_<名称>，索引模式 <名称>.*，仅影响之后新建的索引。",
+    label: "数据库名",
+    placeholder: "如 shop",
+    confirmText: "下一步",
+  });
+  if (!name) return;
+  const opts = await store.promptText({
+    title: `索引模板 ${name.trim()} 的默认设置`,
+    message: "格式：主分片数/副本数，例如 1/1；填「默认」表示 1/1。",
+    label: "分片 / 副本",
+    value: "默认",
+    confirmText: "预览脚本",
+  });
+  if (!opts) return;
+  const [s, r] = opts.trim() === "默认" ? [] : opts.split("/").map((x) => x.trim());
+  const options = JSON.stringify({
+    ...(s ? { number_of_shards: Number(s) || 1 } : {}),
+    ...(r ? { number_of_replicas: Number(r) || 0 } : {}),
+  });
+  try {
+    const script = await api.previewCreateDatabase(conn, {
+      name: name.trim(), options, if_not_exists: true,
+    });
+    const done = await applyScriptWithConfirm(conn, script, {
+      title: `新建逻辑库 ${name.trim()}`, confirmText: "创建模板",
+    });
+    if (done) await refreshConn(conn);
+  } catch (e: any) {
+    store.setStatus(`新建逻辑库失败：${e?.message ?? e}`, "error");
   }
 }
 
@@ -472,7 +512,11 @@ async function menuConn(e: MouseEvent, c: ConnectionConfig) {
   if (kind === "redis") {
     items.push({ label: "新建数据库", icon: "database", action: () => promptRedisDb(c.name) });
   } else {
-    items.push({ label: kind === "mongodb" ? "新建数据库" : "新增数据库", icon: "database", action: () => createDatabase(c.name) });
+    items.push({
+      label: kind === "elasticsearch" ? "新建逻辑库 (索引模板)" : kind === "mongodb" ? "新建数据库" : "新增数据库",
+      icon: "database",
+      action: () => createDatabase(c.name),
+    });
   }
   items.push(
     { label: "导入数据", icon: "upload", action: () => store.openImportTab(c.name, db, "") },
@@ -531,6 +575,9 @@ function menuDb(e: MouseEvent, conn: string, db: string) {
     items.push({ label: "新建 key", icon: "key", action: () => store.openRedisKeyTab(conn, db, "") });
   } else if (kind === "mongodb") {
     items.push({ label: "新建集合", icon: "layers", action: () => store.openMongoCollectionTab(conn, db, "") });
+  } else if (kind === "elasticsearch") {
+    items.push({ label: "新建索引", icon: "search", action: () => store.openESIndexTab(conn, db, "") });
+    items.push({ label: "新建查询 (DSL)", icon: "terminal", action: () => store.openQueryTab(conn) });
   } else {
     items.push(
       {
@@ -580,6 +627,22 @@ function menuObj(e: MouseEvent, conn: string, db: string, o: ObjectInfo) {
     ]);
     return;
   }
+  if (connKind(conn) === "elasticsearch") {
+    openMenu(e, [
+      { label: "浏览文档", icon: "table", action: () => store.openDataTab(conn, ref) },
+      { label: "索引定义 (PUT 脚本)", icon: "code", action: () => store.openESIndexTab(conn, db, o.name) },
+      { label: "查看字段 / 设置", icon: "column", action: () => store.openStructureTab(conn, ref) },
+      { separator: true },
+      { label: "导入数据", icon: "upload", action: () => store.openImportTab(conn, db, o.name) },
+      { label: "导出数据", icon: "download", action: () => store.openExportTab(conn, db, o.name) },
+      { separator: true },
+      { label: "刷新对象", icon: "refresh", action: () => refreshObjects(conn, db) },
+      { label: "删除索引", icon: "trash", danger: true, action: () => dropObject(conn, db, o) },
+      { separator: true },
+      { label: "复制名称", icon: "copy", action: () => copyName(o.name) },
+    ]);
+    return;
+  }
   openMenu(e, [
     { label: "浏览数据", icon: "table", action: () => store.openDataTab(conn, ref) },
     { label: "查看 / 修改结构", icon: "column", action: () => store.openStructureTab(conn, ref) },
@@ -619,6 +682,7 @@ const kindIcon: Record<string, string> = {
   mongodb: "layers",
   redis: "key",
   sqlite: "file",
+  elasticsearch: "search",
 };
 const kindBadge: Record<string, string> = {
   mysql: "badge-info",
@@ -627,6 +691,7 @@ const kindBadge: Record<string, string> = {
   oracle: "badge-warn",
   mongodb: "badge-ok",
   redis: "badge-danger",
+  elasticsearch: "badge-warn",
   sqlite: "",
 };
 function objIcon(o: ObjectInfo) {
@@ -709,7 +774,7 @@ function objIcon(o: ObjectInfo) {
               <Icon name="folder" :size="14" style="color: var(--warn)" />
               <span class="label" :title="db.name">{{ db.name }}</span>
               <span class="node-actions">
-                <button class="btn-icon" style="width: 20px; height: 20px" :title="connKind(c.name) === 'redis' ? '新建 key' : connKind(c.name) === 'mongodb' ? '新建集合' : '新建表'" @click.stop="connKind(c.name) === 'redis' ? store.openRedisKeyTab(c.name, db.name, '') : connKind(c.name) === 'mongodb' ? store.openMongoCollectionTab(c.name, db.name, '') : store.openDesignerTab(c.name, db.name)">
+                <button class="btn-icon" style="width: 20px; height: 20px" :title="connKind(c.name) === 'redis' ? '新建 key' : connKind(c.name) === 'mongodb' ? '新建集合' : connKind(c.name) === 'elasticsearch' ? '新建索引' : '新建表'" @click.stop="connKind(c.name) === 'redis' ? store.openRedisKeyTab(c.name, db.name, '') : connKind(c.name) === 'mongodb' ? store.openMongoCollectionTab(c.name, db.name, '') : connKind(c.name) === 'elasticsearch' ? store.openESIndexTab(c.name, db.name, '') : store.openDesignerTab(c.name, db.name)">
                   <Icon name="plus" :size="13" />
                 </button>
                 <button class="btn-icon" style="width: 20px; height: 20px" title="更多操作" @click.stop="menuDb($event, c.name, db.name)">
@@ -742,6 +807,9 @@ function objIcon(o: ObjectInfo) {
                   </button>
                   <button v-else class="btn-icon" style="width: 20px; height: 20px" title="浏览数据" @click.stop="store.openDataTab(c.name, objRef(db.name, o.name))">
                     <Icon name="table" :size="12" />
+                  </button>
+                  <button v-if="connKind(c.name) === 'elasticsearch'" class="btn-icon" style="width: 20px; height: 20px" title="索引定义" @click.stop="store.openESIndexTab(c.name, db.name, o.name)">
+                    <Icon name="code" :size="12" />
                   </button>
                   <button v-if="connKind(c.name) === 'mongodb'" class="btn-icon" style="width: 20px; height: 20px" title="查看 / 修改结构" @click.stop="store.openMongoCollectionTab(c.name, db.name, o.name)">
                     <Icon name="column" :size="12" />

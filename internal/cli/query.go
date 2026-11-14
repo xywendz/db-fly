@@ -57,7 +57,7 @@ func (c *cli) queryCmd() *cobra.Command {
 		"过滤条件：关系型为 WHERE 片段，MongoDB 为 filter JSON，Redis 为键匹配模式")
 	cmd.Flags().StringVar(&sortText, "sort", "",
 		"排序条件：关系型为 ORDER BY 片段（如 \"id DESC\"），MongoDB 为 sort JSON")
-	cmd.Flags().StringVar(&language, "language", "auto", "查询语言: auto/sql/mongo_filter/mongo_pipeline/redis")
+	cmd.Flags().StringVar(&language, "language", "auto", "查询语言: auto/sql/mongo_filter/mongo_pipeline/redis/es_dsl")
 	cmd.Flags().StringVar(&format, "format", "table", "输出格式: table/json/csv")
 	cmd.Flags().StringVar(&output, "output", "", "输出到文件（默认标准输出）")
 	cmd.Flags().StringVar(&save, "save", "", "同时把本次查询保存为指定名称的收藏")
@@ -83,8 +83,10 @@ func parseLanguage(s string) (domain.QueryLanguage, error) {
 		return domain.LangMongoPipeline, nil
 	case "redis", "redis_command":
 		return domain.LangRedis, nil
+	case "es", "es_dsl", "dsl", "elasticsearch":
+		return domain.LangESDSL, nil
 	default:
-		return "", fmt.Errorf("不支持的查询语言 %q（可用 auto/sql/mongo_filter/mongo_pipeline/redis）", s)
+		return "", fmt.Errorf("不支持的查询语言 %q（可用 auto/sql/mongo_filter/mongo_pipeline/redis/es_dsl）", s)
 	}
 }
 
@@ -110,6 +112,9 @@ func (c *cli) defaultLanguage(conn string) (domain.QueryLanguage, error) {
 		}
 		if caps.Has(domain.CapKeyValues) {
 			return domain.LangRedis, nil
+		}
+		if caps.Has(domain.CapESDSL) {
+			return domain.LangESDSL, nil
 		}
 	}
 	return domain.LangSQL, nil

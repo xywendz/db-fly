@@ -9,13 +9,19 @@ import EmptyState from "./ui/EmptyState.vue";
 const props = defineProps<{ tab: Tab }>();
 const store = useWorkspace();
 
-type Format = "csv" | "tsv" | "json" | "sql" | "markdown";
-const FORMATS: { value: Format; label: string; ext: string; hint: string }[] = [
+type Format = "csv" | "tsv" | "json" | "sql" | "markdown" | "ndjson" | "es_bulk";
+type FormatEntry = { value: Format; label: string; ext: string; hint: string };
+const FORMATS: FormatEntry[] = [
   { value: "csv", label: "CSV", ext: "csv", hint: "逗号分隔，Excel 可直接打开" },
   { value: "tsv", label: "TSV", ext: "tsv", hint: "制表符分隔，适合粘贴到表格" },
   { value: "json", label: "JSON", ext: "json", hint: "对象数组，保留 null" },
   { value: "sql", label: "SQL INSERT", ext: "sql", hint: "可直接回放到同结构表" },
   { value: "markdown", label: "Markdown", ext: "md", hint: "文档表格" },
+];
+/** Elasticsearch 原生无损格式：基于原始 JSON 文档，而非采样列式投影。 */
+const ES_FORMATS: FormatEntry[] = [
+  { value: "ndjson", label: "NDJSON", ext: "ndjson", hint: "每行一个原始文档（含 _id），可直接用导入向导回导" },
+  { value: "es_bulk", label: "ES Bulk", ext: "bulk.ndjson", hint: "_bulk 可回放 NDJSON：动作行 + _source 行" },
 ];
 
 const connName = ref(props.tab.conn);
@@ -51,9 +57,19 @@ const tables = computed(() =>
 const page = computed(() => outcome.value?.pages[0] ?? null);
 const columns = computed(() => page.value?.columns ?? []);
 const rows = computed<Row[]>(() => page.value?.rows ?? []);
-const ext = computed(() => FORMATS.find((f) => f.value === format.value)?.ext ?? "txt");
-// MongoDB 没有 SQL 概念，导出格式不提供 SQL INSERT；其余格式（文档采样展开）依旧可用。
-const formats = computed(() => (kind.value === "mongodb" ? FORMATS.filter((f) => f.value !== "sql") : FORMATS));
+// 连接类型感知：关系型 → sql；MongoDB → mongo_filter；ES → es_dsl；Redis → 命令导出（单独路径）。
+const kind = computed(() => store.connections.find((c) => c.name === connName.value)?.kind ?? "");
+const isES = computed(() => kind.value === "elasticsearch");
+const isRelational = computed(() => !["mongodb", "redis", "elasticsearch"].includes(kind.value));
+const redisMode = computed(() => kind.value === "redis" && !isDatabase.value);
+
+const ext = computed(() => [...FORMATS, ...ES_FORMATS].find((f) => f.value === format.value)?.ext ?? "txt");
+// 文档型没有 SQL 概念；ES 额外提供基于原始文档的 NDJSON / Bulk 无损格式。
+const formats = computed<FormatEntry[]>(() => {
+  if (isES.value) return [...FORMATS.filter((f) => f.value !== "sql"), ...ES_FORMATS];
+  if (kind.value === "mongodb") return FORMATS.filter((f) => f.value !== "sql");
+  return FORMATS;
+});
 const baseName = computed(() => sqlTarget.value.trim() || tableName.value.trim() || "export");
 const fileName = computed(() => `${baseName.value}.${ext.value}`);
 const schemaFileName = computed(() => `${baseName.value}.schema.sql`);
@@ -61,16 +77,25 @@ const schemaFileName = computed(() => `${baseName.value}.schema.sql`);
 const canStructure = computed(() => isRelational.value && source.value === "table" && !!tableName.value.trim());
 const withStructure = computed(() => exportMode.value === "structure_data" && canStructure.value && !!ddl.value);
 
-// 连接类型感知：关系型 → sql；MongoDB → mongo_filter；Redis → 命令导出（单独路径）。
-const kind = computed(() => store.connections.find((c) => c.name === connName.value)?.kind ?? "");
-const isRelational = computed(() => kind.value !== "mongodb" && kind.value !== "redis");
-const redisMode = computed(() => kind.value === "redis" && !isDatabase.value);
+// Bulk 动作行的目标索引默认按「逻辑库 + . + 索引名」还原物理名，允许用户覆盖。
+const defaultTargetIndex = computed(() => {
+  const db = dbName.value.trim();
+  const table = tableName.value.trim();
+  if (!table) return "";
+  if (!db || db === "default") return table;
+  return table.startsWith(`${db}.`) ? table : `${db}.${table}`;
+});
+const targetIndex = ref("");
+const bulkIndex = computed(() => targetIndex.value.trim() || defaultTargetIndex.value || "exported_index");
+const sqlPlaceholder = computed(() => (isES.value
+  ? '{"index":"users","query":{"match":{"status":"paid"}},"size":100}'
+  : "SELECT id, name FROM users WHERE active = 1"));
 
 // 切换连接时，非关系型强制回到「表/集合/键」来源，并清空结果。
 watch(connName, () => {
   if (!isRelational.value && source.value !== "table") source.value = "table";
-  // 非关系型没有 SQL 概念，若之前选中了 SQL 格式则回退到 CSV。
-  if (!isRelational.value && format.value === "sql") format.value = "csv";
+  // 切换数据库类型后，若旧格式不在新类型支持的列表中则回退到 CSV。
+  if (!formats.value.some((f) => f.value === format.value)) format.value = "csv";
   dbContent.value = "";
   outcome.value = null;
   redisContent.value = "";
@@ -192,7 +217,9 @@ async function loadRedisExport() {
 }
 
 function exportLanguage(): string {
-  return kind.value === "mongodb" ? "mongo_filter" : "sql";
+  if (kind.value === "mongodb") return "mongo_filter";
+  if (isES.value) return "es_dsl";
+  return "sql";
 }
 
 async function load() {
@@ -249,6 +276,28 @@ function sqlValue(cell: Cell | undefined): string {
 function buildContent(): string {
   const cols = columns.value.map((c) => c.name);
   const data = rows.value;
+  // ES 原生格式基于原始 JSON 文档（json_documents），完整保留嵌套结构，可与导入闭环。
+  if (format.value === "ndjson" || format.value === "es_bulk") {
+    const docs = page.value?.json_documents ?? [];
+    const lines: string[] = [];
+    for (const text of docs) {
+      if (format.value === "ndjson") {
+        lines.push(text);
+        continue;
+      }
+      let doc: Record<string, any> = {};
+      try { doc = JSON.parse(text) as Record<string, any>; } catch { doc = { _raw: text }; }
+      const id = doc._id;
+      const action: Record<string, any> = { _index: bulkIndex.value };
+      if (id !== undefined && id !== null) {
+        action._id = typeof id === "object" ? JSON.stringify(id) : String(id);
+      }
+      lines.push(JSON.stringify({ index: action }));
+      delete doc._id;
+      lines.push(JSON.stringify(doc));
+    }
+    return lines.join("\n");
+  }
   if (format.value === "json") {
     return JSON.stringify(
       data.map((r) => {
@@ -402,6 +451,11 @@ async function copy() {
               <label class="check-line"><input type="radio" value="sql" v-model="source" /> 使用自定义 SQL</label>
               <label class="check-line"><input type="radio" value="database" v-model="source" /> 整个数据库</label>
             </template>
+            <template v-else-if="kind === 'elasticsearch'">
+              <label class="check-line"><input type="radio" value="table" v-model="source" /> 导出索引数据</label>
+              <label class="check-line"><input type="radio" value="sql" v-model="source" /> 使用自定义 DSL</label>
+              <span class="field-hint">NDJSON / ES Bulk 导出原始 JSON 文档，完整保留嵌套结构；CSV / JSON 等基于采样字段展开。</span>
+            </template>
             <template v-else-if="kind === 'mongodb'">
               <label class="check-line"><input type="radio" value="table" v-model="source" /> 导出集合数据</label>
               <span class="field-hint">MongoDB 集合以 JSON 文档形式导出（CSV / JSON / SQL 等格式基于采样字段展开，每行一个文档）。</span>
@@ -412,9 +466,9 @@ async function copy() {
             </template>
           </div>
           <div v-if="source === 'table' && !redisMode" class="field">
-            <label class="field-label">{{ isRelational ? '表名 *' : '集合名 *' }}</label>
+            <label class="field-label">{{ isRelational ? '表名 *' : isES ? '索引名 *' : '集合名 *' }}</label>
             <select v-model="tableName">
-              <option value="">{{ dbName ? `选择${isRelational ? '表' : '集合'}…` : '请先选择数据库' }}</option>
+              <option value="">{{ dbName ? `选择${isRelational ? '表' : isES ? '索引' : '集合'}…` : '请先选择数据库' }}</option>
               <option v-for="t in tables" :key="t.name" :value="t.name">{{ t.name }}</option>
             </select>
           </div>
@@ -423,8 +477,14 @@ async function copy() {
             <input v-model="tableName" placeholder="* 匹配全部，如 user:*" />
           </div>
           <div v-else-if="source === 'sql'" class="field">
-            <label class="field-label">SQL 语句 *</label>
-            <textarea v-model="sql" class="sql-input mono" rows="4" placeholder="SELECT id, name FROM users WHERE active = 1"></textarea>
+            <label class="field-label">{{ isES ? '查询 DSL *' : 'SQL 语句 *' }}</label>
+            <textarea
+              v-model="sql"
+              class="sql-input mono"
+              rows="4"
+              :placeholder="sqlPlaceholder"
+            ></textarea>
+            <span v-if="isES" class="field-hint">DSL 为 _search 请求体；可带 <code>index</code> 指定索引。size 会按「每表最多行数」限制。</span>
           </div>
           <div v-else class="field-hint">
             将导出该数据库下所有表（结构与 / 或数据）。生成的是可回放的 SQL 脚本，请在下方选择导出内容后点击「生成并下载」。
@@ -453,7 +513,9 @@ async function copy() {
               <span v-if="!canStructure" class="field-hint">只有关系型「导出表数据」来源才能附带表结构。</span>
             </div>
             <div v-else class="row wrap" style="gap: 14px">
-              <span class="field-hint">{{ kind === 'mongodb' ? 'MongoDB 集合以文档形式导出，仅包含数据。' : '该类型仅支持导出数据。' }}</span>
+              <span class="field-hint">{{ isES
+                ? 'Elasticsearch 索引以 JSON 文档形式导出；NDJSON / ES Bulk 保留完整嵌套结构，可无损回导。'
+                : kind === 'mongodb' ? 'MongoDB 集合以文档形式导出，仅包含数据。' : '该类型仅支持导出数据。' }}</span>
             </div>
             <span v-if="exportMode === 'structure_data'" class="field-hint">
               SQL 格式会把 CREATE TABLE 与 INSERT 合并为一个文件；其他格式会额外下载 {{ schemaFileName }}。
@@ -474,13 +536,18 @@ async function copy() {
                 <div v-if="format === 'csv' || format === 'tsv'" class="field">
                   <label class="check-line"><input type="checkbox" v-model="includeHeader" /> 包含列名首行</label>
                 </div>
-                <div v-if="format !== 'sql'" class="field">
+                <div v-if="!['sql', 'ndjson', 'es_bulk'].includes(format)" class="field">
                   <label class="field-label">NULL 显示为</label>
                   <input v-model="nullText" placeholder="留空 = 空字符串" />
                 </div>
                 <div v-if="format === 'sql'" class="field">
                   <label class="field-label">INSERT 目标表</label>
                   <input v-model="sqlTarget" placeholder="与源表同名" />
+                </div>
+                <div v-if="format === 'es_bulk'" class="field">
+                  <label class="field-label">Bulk 目标索引</label>
+                  <input v-model="targetIndex" :placeholder="defaultTargetIndex || '物理索引名'" />
+                  <span class="field-hint">默认 {{ defaultTargetIndex || '按所选索引自动推算' }}，可改成任意目标索引。</span>
                 </div>
               </div>
             </template>

@@ -26,6 +26,7 @@ const language = computed(() => {
   switch (conn.value?.kind) {
     case "mongodb": return "mongo_filter";
     case "redis": return "redis";
+    case "elasticsearch": return "es_dsl";
     default: return "sql";
   }
 });
@@ -33,6 +34,9 @@ const sql = computed({
   get: () => props.tab.sql ?? "",
   set: (v: string) => { props.tab.sql = v; props.tab.dirty = true; },
 });
+const placeholder = computed(() => language.value === "es_dsl"
+  ? '输入 JSON DSL，例如 {"index":"users","query":{"match_all":{}},"size":100}  ·  Ctrl+Enter 执行'
+  : `在此输入 ${language.value} 语句…  Ctrl+Enter 执行`);
 const lineCount = computed(() => sql.value.split("\n").length);
 const rowCount = computed(() => outcome.value?.pages.reduce((n, p) => n + p.rows.length, 0) ?? 0);
 
@@ -171,7 +175,7 @@ onUnmounted(stopResize);
         v-model="sql"
         class="code sql-input"
         spellcheck="false"
-        :placeholder="`在此输入 ${language} 语句…  Ctrl+Enter 执行`"
+        :placeholder="placeholder"
         @scroll="syncScroll"
         @keydown.ctrl.enter.prevent="run(false)"
         @keydown.tab.prevent="onTab"

@@ -7,7 +7,7 @@ import Icon from "./ui/Icon.vue";
 import EmptyState from "./ui/EmptyState.vue";
 import Modal from "./ui/Modal.vue";
 
-const KINDS = ["mysql", "postgresql", "sqlserver", "oracle", "sqlite", "mongodb", "redis"];
+const KINDS = ["mysql", "postgresql", "sqlserver", "oracle", "sqlite", "mongodb", "elasticsearch", "redis"];
 
 const store = useWorkspace();
 const items = ref<SavedQuery[]>([]);
@@ -101,6 +101,7 @@ function connKind(name: string): string {
 function langOf(kind: string): string {
   if (kind === "redis") return "redis";
   if (kind === "mongodb") return "mongo_filter";
+  if (kind === "elasticsearch") return "es_dsl";
   return "sql";
 }
 

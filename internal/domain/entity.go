@@ -19,6 +19,8 @@ const (
 	KindOracle     Kind = "oracle"
 	KindSQLite     Kind = "sqlite"
 	KindRedis      Kind = "redis"
+	// KindElasticsearch 是文档型 / 检索型数据库，以索引命名空间映射逻辑库。
+	KindElasticsearch Kind = "elasticsearch"
 )
 
 // AllKinds 返回产品计划支持的全部数据库类型。
@@ -26,13 +28,15 @@ func AllKinds() []Kind {
 	return []Kind{
 		KindMySQL, KindSQLServer, KindMongoDB,
 		KindPostgreSQL, KindOracle, KindSQLite, KindRedis,
+		KindElasticsearch,
 	}
 }
 
 func (k Kind) Valid() bool {
 	switch k {
 	case KindMySQL, KindSQLServer, KindMongoDB,
-		KindPostgreSQL, KindOracle, KindSQLite, KindRedis:
+		KindPostgreSQL, KindOracle, KindSQLite, KindRedis,
+		KindElasticsearch:
 		return true
 	default:
 		return false
@@ -69,6 +73,8 @@ func DefaultPort(k Kind) int {
 		return 1521
 	case KindRedis:
 		return 6379
+	case KindElasticsearch:
+		return 9200
 	case KindSQLite:
 		return 0
 	default:
@@ -105,6 +111,8 @@ const (
 	CapEmptyTable    Capability = "empty_table"
 	// CapKeyValues 表示键值型模块（Redis）以 key 为浏览对象。
 	CapKeyValues Capability = "key_values"
+	// CapESDSL 表示文档/检索型模块（Elasticsearch）使用 JSON DSL 查询。
+	CapESDSL Capability = "es_dsl"
 )
 
 // CapabilitySet 是能力集合。
@@ -280,21 +288,26 @@ type IndexSpec struct {
 
 // TableDefinition 用于建表脚本生成。
 type TableDefinition struct {
-	Ref         ObjectRef    `json:"ref"`
-	Columns     []ColumnSpec `json:"columns"`
-	Indexes     []IndexSpec  `json:"indexes,omitempty"`
-	Engine      string       `json:"engine,omitempty"`
-	Charset     string       `json:"charset,omitempty"`
-	Collation   string       `json:"collation,omitempty"`
-	Comment     string       `json:"comment,omitempty"`
-	IfNotExists bool         `json:"if_not_exists,omitempty"`
+	Ref       ObjectRef    `json:"ref"`
+	Columns   []ColumnSpec `json:"columns"`
+	Indexes   []IndexSpec  `json:"indexes,omitempty"`
+	Engine    string       `json:"engine,omitempty"`
+	Charset   string       `json:"charset,omitempty"`
+	Collation string       `json:"collation,omitempty"`
+	Comment   string       `json:"comment,omitempty"`
+	// Options 是与方言无关的 JSON 选项文本，由各 provider 自行解释
+	// （如 Elasticsearch 的 settings/mappings/aliases）。
+	Options     string `json:"options,omitempty"`
+	IfNotExists bool   `json:"if_not_exists,omitempty"`
 }
 
 // DatabaseSpec 用于建库/改库脚本生成。
 type DatabaseSpec struct {
-	Name        string `json:"name"`
-	Charset     string `json:"charset,omitempty"`
-	Collation   string `json:"collation,omitempty"`
+	Name      string `json:"name"`
+	Charset   string `json:"charset,omitempty"`
+	Collation string `json:"collation,omitempty"`
+	// Options 是与方言无关的 JSON 选项文本（如索引模板的默认 settings）。
+	Options     string `json:"options,omitempty"`
 	IfNotExists bool   `json:"if_not_exists,omitempty"`
 }
 
@@ -332,10 +345,12 @@ type SchemaChange struct {
 	Comment   string `json:"comment,omitempty"`
 	// Validator 是 MongoDB 集合的 JSON Schema 校验器（Extended JSON 文本）。
 	Validator string `json:"validator,omitempty"`
+	// Options 是与方言无关的 JSON 选项文本（如 Elasticsearch 的 mapping/settings）。
+	Options string `json:"options,omitempty"`
 }
 
 // Script 是可预览、可执行的方言脚本。
-// Format 为 "sql" 时 Statements 是 SQL 文本；为 "mongo_command" 时是 JSON 命令文本。
+// Format 为 "sql" 时 Statements 是 SQL 文本；为 "mongo_command" / "es_command" 时是 JSON 命令文本。
 // Rollback 为 best-effort，不保证与所有数据库一致。
 type Script struct {
 	Format     string   `json:"format,omitempty"`
@@ -366,6 +381,8 @@ const (
 	LangMongoFilter   QueryLanguage = "mongo_filter"
 	LangMongoPipeline QueryLanguage = "mongo_pipeline"
 	LangRedis         QueryLanguage = "redis"
+	// LangESDSL 表示 Elasticsearch 的 JSON Query DSL / _search body。
+	LangESDSL QueryLanguage = "es_dsl"
 )
 
 // TableAction 枚举「清空表数据」的两种动作。
@@ -527,6 +544,9 @@ type EditRequest struct {
 	KeyColumns  []string  `json:"key_columns,omitempty"`
 	Edits       []RowEdit `json:"edits"`
 	Transaction bool      `json:"transaction,omitempty"`
+	// Documents 是与 Edits 一一对应的原始 JSON 文档文本（仅文档型 JSON/NDJSON 导入提供）。
+	// 文档型数据库可据此无损写入，避免字符串化造成的标量类型丢失；其他模块可忽略。
+	Documents []string `json:"documents,omitempty"`
 }
 
 // EditResult 汇总回写结果，Statements 用于预览与审计。

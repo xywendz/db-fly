@@ -796,3 +796,166 @@ graph TD
 - Web 旧版根目录数据**不自动迁移**；如需沿用，可手动把 `config.json` / `secrets.json` / `credential.salt` 复制到 `users/<id>/`（同一 Windows 用户或相同 `DB_FLY_MASTER_KEY` 下可解密）。
 - 不做角色/RBAC、不做密码找回、不做会话持久化；每用户数据量与连接数无独立配额。
 - 同一用户多标签页共享一份 `app.App` 与上传目录，由 `app.App` 内部锁串行化配置读写。
+
+---
+
+## 7. Elasticsearch 适配器业务设计
+
+### 7.1 目标、范围与约束
+
+目标：把 Elasticsearch（下称 ES，7.x / 8.x / 9.x）作为**第二种文档型数据库**接入，能力对齐并超过 MongoDB 模块，且体现 ES 自身的检索/索引特性。
+
+| 约束 | 决策 |
+| --- | --- |
+| 依赖 | **不引入第三方 ES SDK**，仅用标准库 `net/http` + `encoding/json` 实现 REST 客户端（ES 全部能力均为 HTTP + JSON）。`go.mod` / `go.sum` 零改动，离线可编译。 |
+| 隔离 | 新建 `internal/provider/elasticsearch/`，禁止 import 其他 provider；通用层不出现 `if Kind == "elasticsearch"` 的方言逻辑，一律通过 `CapabilitySet` 驱动。 |
+| 安全 | 沿用「结构化编辑 → 方言脚本预览 → 用户显式确认 → `ApplyScript`」；只读连接拒绝写操作；密码只走 `CredentialStore`。 |
+| 有界 | 所有 `_search` 强制 `size` 上限（默认 `DefaultMaxRows`），列式投影字段 ≤40、深度 ≤3、单元格文本 ≤240 字符。 |
+| 兼容 | 复用 `app.ImportFile` / `app.ApplyDataEdit` / `consumeResult` / `ExportView` 等既有链路，通用层只做能力驱动的最小扩展。 |
+
+**不在本期范围**：ES SQL (`_sql`)、跨集群搜索 CCS、EQL、PIT/scroll 深分页（提供 `from/size` + 明确截断提示）、索引别名切换的原子换名、data stream rollover、清空表（Maintenance 返回 `nil`）、整库 SQL 脚本导出（仍仅关系型）。
+
+### 7.2 领域映射（核心设计）
+
+ES 无「数据库 / 表 / 行」概念，用**索引命名空间**把它映射到统一的三级资源树：
+
+| 统一概念 | ES 落地 | 说明 |
+| --- | --- | --- |
+| 数据库 `DatabaseInfo` | **索引名前缀命名空间** | 索引 `shop.users` → 库 `shop`、集合 `users`；无分隔符的索引 `logs` → 固定库 `default`。分隔符由连接参数 `namespaceSeparator` 指定（默认 `.`；填 `none` 关闭分组，全部归 `default`——表单会删除空值，故用显式关键字）。额外把 db-fly 管理的索引模板 `dbfly_<db>` 也列为一个库，使「空库」可见。以 `.` 开头的系统索引默认隐藏（标记 `System`）。 |
+| schema 层级 | 无 | `ListSchemas` 返回 `nil`。 |
+| 集合 `ObjectInfo` | **索引 / 数据流** (`ObjectCollection`) | `GET /_cat/indices?format=json` 拿 `index/docs.count/store.size/status/health`，`Rows` 用 `docs.count`；`GET /_data_stream` 追加数据流节点；`GET /_cat/aliases` 把别名映射为 `ObjectView`。 |
+| 物理索引名 | `physicalIndex(db, name)` | `db ∈ {"", "default"}` 或 `name` 已含命名空间前缀时原样返回，否则 `db + sep + name`；反向 `splitPhysical()` 按首个分隔符切分。相对名用于 UI，物理名用于 REST 路径，映射规则只存在于 provider 内。 |
+| 表结构 `TableSchema` | `_mapping` + `_settings` | `Columns` 由 `properties` 递归展开为 `a.b` 点路径并标注 ES 类型（`text/keyword/long/date/object/…`），比 Mongo 的采样推断更准确；`Engine` 放 `shards/replicas` 摘要；`Comment` 放别名、dynamic、创建时间；`DDL` 放 `ShowCreate` 生成的 `PUT /<index>` JSON；`Indexes` 用一条 `_id` 伪主键索引（`Primary=true`）。 |
+| 文档主键 | `_id` | 能力 `CapJSONTree` 使 `app.TableKeyColumns` 自动回退到 `["_id"]`，结果集编辑可据此定位文档。 |
+| 原始文档 | `ResultSet.Document()` | 返回 `_source` 与 `_id` 合并后的单个 JSON 对象，供 JSON 树视图与 NDJSON 导出使用；导入时 `_id` 被提取为文档 ID 并从 `_source` 移除，形成可往返闭环。 |
+| 版本 | `ServerInfo` | `GET /` 的 `version.number` → `Version`，`cluster_name` → `Edition`，`Host` 为配置主机。 |
+
+### 7.3 连接与认证设计
+
+`ConnectionConfig` 不新增字段，复用 `Host/Port/User/Password/TLSMode/Params/Database/TimeoutSec`：
+
+| 条目 | 规则 |
+| --- | --- |
+| 默认端口 | `9200`。 |
+| scheme | `TLSMode ∈ {true, skip-verify}` → `https`（后者 `InsecureSkipVerify`），其余 → `http`；`params.scheme` 可显式覆盖。 |
+| 认证 | `params.auth`：`basic`（默认，Basic Auth 用 `User:Password`）｜ `apikey`（`Authorization: ApiKey <Password>`，密码栏填 `id:api_key` 或 Base64 串）｜ `none`。 |
+| 反向代理 | `params.pathPrefix`（如 `/es`）拼在所有 REST 路径前。 |
+| 其它参数 | `params.namespaceSeparator`（默认 `.`）、`params.showSystemIndices`（`true` 显示系统索引）、`params.refresh`（默认 `true`，控制 bulk 写入后刷新）、`params.defaultIndex`（未指定索引时的兜底）。 |
+| `Database` | 默认逻辑库（一般留空或 `default`）；`defaultIndex` 优先用于裸 DSL 查询。 |
+| 探活 | `Open()` 发 `GET /` 建立会话并校验可达性；主版本不在 7–9 之间时给出提示但不阻断（兼容 OpenSearch 等兼容发行版）。 |
+| 超时 | `http.Client.Timeout = cfg.EffectiveTimeout()`，每次请求再套用调用方 `ctx`。 |
+
+### 7.4 能力声明与查询语言
+
+新增 `domain.CapESDSL = "es_dsl"` 与 `domain.LangESDSL = "es_dsl"`，由能力的优先级决定默认语言（`app.prepareQuery`、`cli.defaultLanguage`、`bridge.languagesOf` 各加一条能力分支，不写 `switch Kind`）。
+
+| 能力 | 值 | 语义 |
+| --- | :---: | --- |
+| `CapCreateDatabase` / `CapAlterDatabase` | ✔ / ✔ | 创建 / 更新**组合索引模板**（index template） |
+| `CapCreateTable` / `CapAlterTable` / `CapDropObject` | ✔ | 创建 / 修改 mapping 与 settings / 删除索引 |
+| `CapIndexes` | ✔ | mapping 字段即索引，结构页展示字段定义 |
+| `CapESDSL` / `CapJSONTree` | ✔ | JSON DSL 查询；原始文档 JSON 树 |
+| `CapExplain` / `CapTableFilter` / `CapDataEdit` / `CapShowCreate` | ✔ | `_search?explain`、结构化过滤、文档回写、`PUT /<index>` 等价脚本 |
+| `CapMultiResult` | ✔ | 聚合桶作为第二个结果集返回 |
+| `CapSQL` / `CapMongoFilter` / `CapKeyValues` / `CapSchemas` / `CapForeignKeys` / `CapTransactions` / `CapTruncateTable` / `CapEmptyTable` | ✘ | ES 无 SQL/外键/事务；清空数据不做静默删除 |
+
+### 7.5 查询设计（`QueryExecutor`）
+
+- **输入形态**：`LangESDSL`，`q.Text` 可为
+  1. 完整 `_search` body：`{"query":{"match":{"title":"go"}},"aggs":{…},"sort":[…]}`；
+  2. 包装对象：`{"index":"shop.users 或 users 或 logs-*","query":{…},"size":20,"from":0}`；
+  3. 纯文本（非 JSON）：编译为 `{"query":{"query_string":{"query":"<text>"}}}`，便于快速检索。
+- **目标索引优先级**：包装对象 `index` → `q.Collection` → `physicalIndex(q.Database, q.Ref.Name)` → `q.Database`（本身是索引名/通配符时）→ `params.defaultIndex` → `_all`。相对名统一经 `physicalIndex` 转换。
+- **分页与有界**：`from = q.Offset`，`size = q.MaxRows + 1`（多取一条供 `consumeResult` 标记 `Truncated`）；`MaxRows<=0` 时取 `DefaultMaxRows`。
+- **表数据浏览**：`Text` 为空时生成 `match_all`；`Filter` 为 DSL JSON 或 KQL 文本；结构化 `Conditions` 翻译为 `bool.must/should`（`= term`、`!= must_not`、`> >= < <= range`、`LIKE wildcard`、`IN terms`、`IS NULL must_not.exists`），`OrderTerms` 翻译为 `sort` 数组。
+- **结果集**：主结果集 = `hits.hits` 的列式投影 + `Document()` 原始 JSON；第二结果集 = `aggregations` 的桶（`name` / `doc_count` / `value` 三列）；`Messages()` 汇总 `took` / `timed_out` / `hits.total` / `_shards`。
+- **Explain**：同一 `_search` 加 `explain:true, size:1`，把 `_explanation` 包装成单 JSON 文档结果集。
+- **Exec**：提交原生 REST 命令对象 `{"method":"PUT","path":"/my-index/_settings","body":{…}}`（路径支持 `{index}` 占位符），或 `es_command` 动作对象；用于 CLI、DSL 控制台与高级管理命令。只读连接沿用通用层的写语句拦截（JSON 会被视为非只读语句而拒绝，属于保守安全行为）。
+
+### 7.6 结构变更设计（创建数据库 / 集合）
+
+`Script.Format = "es_command"`，`Statements` 每条为一个 `esCommand` JSON；`Rollback` 为 best-effort 反向命令；`Warnings` 说明 ES 特有语义。
+
+| 动作 | REST 调用 | 业务说明 |
+| --- | --- | --- |
+| `createDatabase` | `PUT /_index_template/dbfly_<db>` | 用组合索引模板表达「库」：`index_patterns = ["<db><sep>*"]`、`priority=100`、`_meta.managed_by=db-fly`，`template.settings` 来自 `DatabaseSpec.Options`（分片/副本/分析器）。**不会**创建空索引，符合 ES「写入时才建索引」的特性。 |
+| `alterDatabase` | 同一 `PUT` 覆盖模板 | 只影响后续新建索引，已有索引不受影响（写入 Warnings）。 |
+| `dropDatabase` | `DELETE /_index_template/...` + 逐条 `dropIndex` | 明确列出将删除的索引，走危险确认；默认只删模板更安全。 |
+| `createTable` | `PUT /<physical>` | body = `{settings, mappings:{dynamic, properties}, aliases}`；`TableDefinition.Columns` 经 `esFieldType()` 映射为 mapping 字段，新增的通用字段 `TableDefinition.Options`（JSON 文本，与方言无关）承载 `number_of_shards` / `number_of_replicas` / `refresh_interval` / `analyzer` / `dynamic` / `aliases` / 完整 `mappings` 覆盖。`IfNotExists` 在 `Apply` 里先 `HEAD` 判断。 |
+| `alterTable` | `PUT /<physical>/_mapping`、`PUT /<physical>/_settings` | 支持 `add_column` / `modify_column`（ES 只允许新增字段或改子字段，冲突会由服务端报错）/ `table_options` / `collection_options`；`rename_table` 与二级索引变返回 `CodeUnsupported` 并提示用 reindex。 |
+| `dropObject` | `DELETE /<physical>`（别名走 `_alias`） | 不可恢复，Warnings 明示。 |
+| `showCreate` | `GET /<physical>/_settings` + `_mapping` | 拼成可重放的 `PUT /<index> {...}` JSON 文本。 |
+| `Apply` | 顺序执行 | 任一失败即停，返回 `ExecOutcome`；HTTP 错误统一映射成 `domain.Error`。 |
+
+类型映射 `esFieldType()`：`INT*/BIGINT/SMALLINT→long`、`FLOAT/DOUBLE/DECIMAL/NUMBER→double`、`BOOL→boolean`、`DATE/DATETIME/TIMESTAMP→date`、`BINARY/BLOB→binary`、`JSON/OBJECT→object`、字符串默认 `text` 并附 `fields.keyword`（`ignore_above:256`），`KEYWORD` 显式指定时用 `keyword`；`_id` 字段跳过。
+
+### 7.7 导入设计（`_bulk`）
+
+沿用 `app.ImportFile` 的既有链路：CSV / TSV / XLSX / JSON / NDJSON → `documentsToRows` → `EditInsert` → 按 `BatchSize` 分批 → `DataEditor.Apply`。ES 只实现最后一环，**通用层零方言改动**：
+
+1. 一批 `RowEdit.Values`（`map[string]*string`）逐个经 `parseScalar` 还原为 JSON 类型（对象/数组/数字/布尔/null，其余保持字符串），保留嵌套结构。
+2. 提取 `_id` 作为文档 ID 并从 `_source` 移除；缺省则由 ES 自动生成 ID。
+3. 组装 NDJSON：
+   ```
+   {"index":{"_index":"shop.users","_id":"1001"}}
+   {"name":"Alice","tags":["a","b"],"created_at":"2026-01-01"}
+   ```
+   `POST /_bulk?refresh=<bool>`，`Content-Type: application/x-ndjson`。一批 edits = 一次 bulk 请求，天然对齐导入向导的「每批行数」。
+4. 解析响应：`errors:true` 时汇总前若干条 `status/error.reason` 返回 `domain.Error`；否则 `Applied += 成功条数`。
+5. `EditUpdate` → bulk `update {doc, doc_as_upsert:false}`；`EditDelete` → bulk `delete`，与插入共用同一通道。
+6. `Preview` 返回可读 NDJSON（不写库）；`Transaction` 被忽略并在结果中提示「ES 无跨文档事务，bulk 为逐条原子」。
+7. `params.refresh=true`（默认）让导入后立即可检索，大批量导入可关闭以提升吞吐。
+8. 索引不存在时 ES 默认自动建索引；如需严格模式由用户在结构页先创建索引。
+9. **无损原始文档通道**：`EditRequest.Documents` 携带 JSON / NDJSON 每个文档的原始 JSON 文本（与 `Edits` 一一对应），通用层只负责透传、不解释方言；ES 的 `bulkLines` 直接以原始文档作为 `_source`（仅提取 `_id` 并移除），避免 `documentsToRows` 字符串化导致的数字 / 布尔 / 嵌套类型丢失，使 NDJSON 导出 → 导入完全可往返。CSV / TSV / XLSX 仍走 `parseScalar` 还原。
+
+### 7.8 导出设计
+
+沿用导出向导「读取一页 → 前端拼文本 → Blob 下载」。ES 增加两种**原生无损格式**，均基于 `ResultPage.JSONDocuments`（而不是列式投影，避免嵌套结构丢失）：
+
+| 格式 | 内容 | 用途 |
+| --- | --- | --- |
+| `ndjson` | 每行一个原始文档 JSON（含 `_id`） | 直接被本工具「JSON / NDJSON」导入，形成往返闭环；也是 elasticdump 生态标准格式。 |
+| `es_bulk` | 两行一组：`{"index":{"_index":"<physical>","_id":"..."}}` + `_source` | 可用 `curl -XPOST <host>/_bulk --data-binary @file` 或任意客户端回放；向导提供「目标索引名」输入框，默认按 `physicalIndex(db, table)` 计算。 |
+
+同时：CSV / TSV / JSON / Markdown 四种列式格式继续可用；SQL INSERT 与整库 SQL 脚本导出对 ES 禁用；「自定义查询」来源对 ES 开放为**自定义 DSL**（导出命中 DSL 的文档）。
+
+### 7.9 数据编辑设计
+
+- 列式表格把 `_id` 作为首列；`app.TableKeyColumns` 因 `CapJSONTree` 回退 `["_id"]`，据此生成 `RowEdit.Key`。
+- `EditUpdate` 只提交变更字段（partial doc），不得改写 `_id`；`EditDelete` 按 `_id` 删除；`EditInsert` 可显式带 `_id`。
+- 预览统一为 NDJSON 文本，用户确认后一次 bulk 提交；不提供事务。
+
+### 7.10 错误映射
+
+REST 响应解析 `error.type` / `error.reason` / `status`：`401/403 → CodeAuthFailed|CodePermission`、`404 → CodeNotFound`、`400 + resource_already_exists_exception → CodeSchema`、`408/429 → CodeTimeout`、其余 → `CodeQuery`；网络/超时分别映射为 `CodeConnection` / `CodeTimeout` / `CodeCanceled`。所有对外错误仍经 `domain.WrapError` 包装，前端展示沿用 `domain.UserMessage`。
+
+### 7.11 文件级改动清单
+
+**后端**
+| 文件 | 改动 |
+| --- | --- |
+| `internal/domain/entity.go` | `KindElasticsearch`、`AllKinds/Valid/DefaultPort(9200)`、`CapESDSL`、`LangESDSL`、`TableDefinition.Options`、`DatabaseSpec.Options`、`SchemaChange.Options`、`EditRequest.Documents`、`Script.Format` 注释 |
+| `internal/app/import.go` | `parseJSONDocuments` 保留每篇文档原始 JSON 文本，按批透传 `EditRequest.Documents`（`readJSONRecords` 签名不变） |
+| `internal/provider/elasticsearch/` | `es.go`（注册/连接/能力/版本/错误）、`client.go`（REST 客户端）、`helpers.go`（命名映射/类型/投影/脚本编解码）、`metadata.go`、`schema.go`、`query.go`、`result.go`、`data.go`、`es_test.go` |
+| `internal/provider/all/all.go` | 一行空白导入 |
+| `internal/bridge/bridge.go` | `labelOf()`、`languagesOf()` 能力分支 |
+| `internal/app/query.go` | 默认语言的能力分支 |
+| `internal/cli/conn.go / query.go / schema.go` | 类型别名、`parseLanguage` / `defaultLanguage`、`--format es_command` 与提示文本 |
+
+**前端**
+| 文件 | 改动 |
+| --- | --- |
+| `types/domain.ts` | `Kind` / `Capability` / `TableDefinition.options` |
+| `config/kinds.ts` | `KIND_ORDER`、`KIND_FORMS[elasticsearch]`（9200、认证/命名空间/路径前缀参数、TLS 提示） |
+| `ConnectionTree.vue` | 图标/徽标、ES 右键菜单（新建命名空间、新建索引、导入、导出、结构） |
+| `QueryView.vue`、`FavoritesPanel.vue`、`HistoryPanel.vue` | 语言映射 `es_dsl` |
+| `ImportView.vue`、`ExportView.vue` | 非关系型判定、ES 导入说明、`ndjson` / `es_bulk` 导出格式、目标索引名 |
+| `TableDataView.vue` | 文档型判定（Mongo + ES）统一走 JSON 文档视图 |
+| `stores/workspace.ts`、`App.vue` | `es-index` 页签类型与分发 |
+| `components/ESIndexView.vue`（新增） | 索引设计器：分片/副本/refresh/dynamic/别名/字段 mapping/原始 JSON，走脚本预览确认 |
+
+### 7.12 测试与验收
+
+- `internal/provider/elasticsearch/es_test.go` 用 `httptest.Server` 模拟 ES REST API，覆盖：命名映射与校验、DSL 组装（条件/排序/分页/包装对象）、`$bulk` NDJSON 生成与响应错误、esCommand 编解码、mapping→ColumnInfo、文档→列式投影与 `Document()`、连接认证头与 TLS 参数、创建库/集合脚本与 `Apply` 的完整往返。不依赖真实 ES，可进 CI。
+- 验收命令：`go build ./... && go vet ./... && go test ./...`，`npm run typecheck && npm run build`（等价于 `./build/verify.ps1`）。
+- 手工验收（需真实 ES 7/8/9）：新建连接 → 版本显示 → 资源树出现命名空间与索引 → 新建模板/索引 → CSV 与 NDJSON 导入 → DSL 查询 → JSON 树 → NDJSON / Bulk 导出 → 再导入回放。

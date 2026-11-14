@@ -225,9 +225,12 @@ async function save() {
           <input v-model="form.user" placeholder="例如 root / postgres / sa" />
         </div>
         <div v-if="cfg.showPassword" class="field">
-          <label class="field-label">密码{{ form.kind === "redis" ? "（Redis 只使用密码）" : "" }}</label>
+          <label class="field-label">密码{{ form.kind === "redis" ? "（Redis 只使用密码）" : form.params?.auth === "apikey" ? "（ES API Key）" : "" }}</label>
           <input v-model="password" type="password" :placeholder="isEdit ? '留空表示不修改' : '连接密码'" />
-          <span v-if="isEdit" class="field-hint">留空则保留原有凭证</span>
+          <span v-if="form.kind === 'elasticsearch' && form.params?.auth === 'apikey'" class="field-hint">
+            填 Elasticsearch API Key（id:api_key 或 Base64 串），用户名可留空。
+          </span>
+          <span v-else-if="isEdit" class="field-hint">留空则保留原有凭证</span>
         </div>
       </div>
 

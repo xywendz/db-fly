@@ -22,6 +22,7 @@ import ImportView from "./components/ImportView.vue";
 import RedisKeysView from "./components/RedisKeysView.vue";
 import RedisKeyView from "./components/RedisKeyView.vue";
 import MongoCollectionView from "./components/MongoCollectionView.vue";
+import ESIndexView from "./components/ESIndexView.vue";
 import ConnectionDialog from "./components/ConnectionDialog.vue";
 import HistoryPanel from "./components/HistoryPanel.vue";
 import FavoritesPanel from "./components/FavoritesPanel.vue";
@@ -92,6 +93,7 @@ const TAB_ICONS: Record<TabType, string> = {
   "redis-keys": "key",
   "redis-key": "key",
   "mongo-coll": "layers",
+  "es-index": "search",
 };
 function tabIcon(t: Tab) {
   return TAB_ICONS[t.type] ?? "file";
@@ -224,6 +226,7 @@ onUnmounted(() => {
             <RedisKeysView v-else-if="activeTab && activeTab.type === 'redis-keys'" :key="activeTab.id" :tab="activeTab" />
             <RedisKeyView v-else-if="activeTab && activeTab.type === 'redis-key'" :key="activeTab.id" :tab="activeTab" />
             <MongoCollectionView v-else-if="activeTab && activeTab.type === 'mongo-coll'" :key="activeTab.id" :tab="activeTab" />
+            <ESIndexView v-else-if="activeTab && activeTab.type === 'es-index'" :key="activeTab.id" :tab="activeTab" />
             <div v-else :key="'welcome'" class="welcome">
               <img src="/logo.png" alt="db-fly" class="welcome-logo" />
               <h1>db-fly</h1>

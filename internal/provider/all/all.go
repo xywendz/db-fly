@@ -3,6 +3,7 @@
 package all
 
 import (
+	_ "github.com/db-fly/db-fly/internal/provider/elasticsearch"
 	_ "github.com/db-fly/db-fly/internal/provider/mongo"
 	_ "github.com/db-fly/db-fly/internal/provider/mssql"
 	_ "github.com/db-fly/db-fly/internal/provider/mysql"

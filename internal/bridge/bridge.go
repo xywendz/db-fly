@@ -118,6 +118,8 @@ func labelOf(k domain.Kind) string {
 		return "SQLite"
 	case domain.KindRedis:
 		return "Redis"
+	case domain.KindElasticsearch:
+		return "Elasticsearch"
 	default:
 		return string(k)
 	}
@@ -133,6 +135,9 @@ func languagesOf(caps domain.CapabilitySet) []string {
 	}
 	if caps.Has(domain.CapKeyValues) {
 		langs = append(langs, string(domain.LangRedis))
+	}
+	if caps.Has(domain.CapESDSL) {
+		langs = append(langs, string(domain.LangESDSL))
 	}
 	return langs
 }

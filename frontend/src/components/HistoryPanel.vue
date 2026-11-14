@@ -72,7 +72,7 @@ async function favorite(it: QueryHistoryEntry) {
     const q: Omit<SavedQuery, "updated_at"> = {
       id: "", name, folder: "", kind: kind || undefined,
       connection: it.connection, database: it.database,
-      language: kind === "redis" ? "redis" : kind === "mongodb" ? "mongo_filter" : "sql",
+      language: kind === "redis" ? "redis" : kind === "mongodb" ? "mongo_filter" : kind === "elasticsearch" ? "es_dsl" : "sql",
       text: it.text,
     };
     await api.saveSavedQuery(q);

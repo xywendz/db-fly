@@ -95,7 +95,7 @@ func (c *cli) connAddCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&name, "name", "", "连接名称（必填）")
 	cmd.Flags().StringVar(&kind, "kind", string(domain.KindMySQL),
-		"数据库类型: mysql/sqlserver/mongodb/postgresql/oracle/sqlite/redis")
+		"数据库类型: mysql/sqlserver/mongodb/postgresql/oracle/sqlite/redis/elasticsearch")
 	cmd.Flags().StringVar(&host, "host", "127.0.0.1", "主机（SQLite 为数据库文件路径）")
 	cmd.Flags().IntVar(&port, "port", 3306, "端口（默认按 --kind 自动选择；SQLite 可为 0）")
 	cmd.Flags().StringVar(&user, "user", "root", "用户名")
@@ -153,6 +153,8 @@ func normalizeKind(s string) domain.Kind {
 		return domain.KindSQLServer
 	case "mongo":
 		return domain.KindMongoDB
+	case "es", "elastic", "elasticsearch":
+		return domain.KindElasticsearch
 	default:
 		return domain.Kind(strings.ToLower(strings.TrimSpace(s)))
 	}

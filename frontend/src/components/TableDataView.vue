@@ -54,10 +54,10 @@ const effectiveKeys = computed(() => (keyCols.value.length ? keyCols.value : act
 const loadedRows = computed(() => outcome.value?.pages?.[0]?.rows?.length ?? 0);
 const canNext = computed(() => loadedRows.value >= maxRows.value);
 
-// Mongo 集合以文档为单位编辑：用 JSON 输入框新增文档，按 _id 删除文档。
-const isMongo = computed(
-  () => (store.connections.find((c) => c.name === props.tab.conn)?.kind ?? "") === "mongodb",
-);
+// 文档型数据库（MongoDB / Elasticsearch）以文档为单位编辑：JSON 输入框新增、按 _id 删除。
+const isDocument = computed(() => ["mongodb", "elasticsearch"].includes(
+  store.connections.find((c) => c.name === props.tab.conn)?.kind ?? "",
+));
 const pageDocs = computed(() => outcome.value?.pages?.[0]?.json_documents ?? []);
 
 // 草稿行转 INSERT 值：留空列不提供，输入 NULL 表示显式空值。
@@ -540,7 +540,7 @@ async function deleteDocByIndex(i: number) {
     </div>
 
     <div class="toolbar edit-bar">
-      <button v-if="!isMongo" class="btn btn-sm" :disabled="!colNames.length" title="在表格下方增加一行空行" @click="addDraftRow">
+      <button v-if="!isDocument" class="btn btn-sm" :disabled="!colNames.length" title="在表格下方增加一行空行" @click="addDraftRow">
         <Icon name="plus" :size="13" /> 新增行
         <span v-if="drafts.length" class="badge badge-accent">{{ drafts.length }}</span>
       </button>
@@ -552,10 +552,10 @@ async function deleteDocByIndex(i: number) {
       </button>
       <button v-if="deleteRows.length" class="btn btn-sm" @click="unmarkDeleted">撤销删除标记</button>
       <span class="divider-v"></span>
-      <button v-if="!isMongo" class="btn btn-sm" :disabled="!selectedRows.length" title="将选中行复制到本页剪贴板" @click="copySelectedRows">
+      <button v-if="!isDocument" class="btn btn-sm" :disabled="!selectedRows.length" title="将选中行复制到本页剪贴板" @click="copySelectedRows">
         <Icon name="copy" :size="13" /> 复制选中 ({{ selectedRows.length }})
       </button>
-      <button v-if="!isMongo" class="btn btn-sm" :disabled="!copiedRows.length" title="把已复制的行作为新记录插入" @click="insertCopiedRows">
+      <button v-if="!isDocument" class="btn btn-sm" :disabled="!copiedRows.length" title="把已复制的行作为新记录插入" @click="insertCopiedRows">
         <Icon name="paste" :size="13" /> 插入复制的行 ({{ copiedRows.length }})
       </button>
       <span class="divider-v"></span>

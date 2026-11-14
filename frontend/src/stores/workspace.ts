@@ -10,7 +10,7 @@ import type {
 import * as api from "@/api/client";
 import { useSettings } from "./settings";
 
-export type TabType = "query" | "data" | "structure" | "designer" | "export" | "import" | "redis-keys" | "redis-key" | "mongo-coll";
+export type TabType = "query" | "data" | "structure" | "designer" | "export" | "import" | "redis-keys" | "redis-key" | "mongo-coll" | "es-index";
 export type StatusLevel = "info" | "error" | "ok" | "warn";
 
 export interface Tab {
@@ -438,6 +438,37 @@ export const useWorkspace = defineStore("workspace", () => {
     leftCollapsed.value = false;
   }
 
+  /** ES 索引设计器页签：name 为空表示新建索引；非空表示查看已有索引的 mapping/settings。 */
+  function openESIndexTab(conn: string, database: string, name = "") {
+    if (name) {
+      const existing = tabs.value.find(
+        (t) =>
+          t.type === "es-index" &&
+          t.conn === conn &&
+          t.database === database &&
+          (t.ref?.name ?? "") === name,
+      );
+      if (existing) {
+        activeTabId.value = existing.id;
+        leftCollapsed.value = false;
+        return;
+      }
+    }
+    const id = `ei${++tabSeq}`;
+    tabs.value.push({
+      id,
+      type: "es-index",
+      conn,
+      database,
+      ref: { database, name },
+      title: name ? `索引 · ${name}` : `新建索引 · ${database}`,
+    });
+    activeTabId.value = id;
+    activeConn.value = conn;
+    activeDb.value = database;
+    leftCollapsed.value = false;
+  }
+
   function openStructureTab(conn: string, ref: ObjectRef) {
     const existing = findTab("structure", conn, ref);
     if (existing) {
@@ -656,6 +687,7 @@ export const useWorkspace = defineStore("workspace", () => {
     openRedisKeyTab,
     createRedisDb,
     openMongoCollectionTab,
+    openESIndexTab,
     openDesignerTab,
     openExportTab,
     openImportTab,

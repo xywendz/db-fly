@@ -249,6 +249,15 @@ func (c *cli) schemaApplyCmd() *cobra.Command {
 				script.Warnings = []string{
 					"MongoDB 命令按数组顺序执行，失败即停止；删除类操作不可恢复。",
 				}
+			case "es_command":
+				script.Statements, err = splitMongoCommands(text)
+				if err != nil {
+					return err
+				}
+				script.Warnings = []string{
+					"Elasticsearch 命令按数组顺序执行，失败即停止；删除类操作不可恢复。",
+					"索引模板变更只影响后续新建索引，已有索引不受影响。",
+				}
 			case "sql":
 				script.Statements = app.SplitStatements(text)
 				script.Warnings = []string{
@@ -265,14 +274,14 @@ func (c *cli) schemaApplyCmd() *cobra.Command {
 				}
 				script.Warnings = []string{"Redis 命令按行顺序执行，失败即停止；删除类操作不可恢复。"}
 			default:
-				return fmt.Errorf("不支持的脚本格式 %q（可用 auto/sql/mongo_command/redis_command）", format)
+				return fmt.Errorf("不支持的脚本格式 %q（可用 auto/sql/mongo_command/redis_command/es_command）", format)
 			}
 			return c.previewAndApply(cmd, conn, script, apply, yes)
 		},
 	}
 	cmd.Flags().StringVar(&conn, "conn", "", "连接名称（必填）")
 	cmd.Flags().StringVar(&file, "file", "", "SQL 或 MongoDB 命令脚本文件（必填）")
-	cmd.Flags().StringVar(&format, "format", "auto", "脚本格式: auto/sql/mongo_command/redis_command")
+	cmd.Flags().StringVar(&format, "format", "auto", "脚本格式: auto/sql/mongo_command/redis_command/es_command")
 	cmd.Flags().BoolVar(&apply, "apply", false, "执行脚本（默认仅预览）")
 	cmd.Flags().BoolVar(&yes, "yes", false, "非交互确认")
 	_ = cmd.MarkFlagRequired("conn")

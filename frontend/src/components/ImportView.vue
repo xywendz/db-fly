@@ -27,9 +27,10 @@ const path = ref("");
 const pickedName = ref("");
 const format = ref(props.tab.format || "csv");
 const sheet = ref("");
-// 连接类型感知：关系型支持全部格式；MongoDB 没有 SQL 概念，导入不提供 SQL 脚本。
+// 连接类型感知：关系型支持全部格式；文档/键值库没有 SQL 概念，导入不提供 SQL 脚本。
 const kind = computed(() => store.connections.find((c) => c.name === connName.value)?.kind ?? "");
-const isRelational = computed(() => kind.value !== "mongodb" && kind.value !== "redis");
+const isES = computed(() => kind.value === "elasticsearch");
+const isRelational = computed(() => !["mongodb", "redis", "elasticsearch"].includes(kind.value));
 const importFormats = computed(() => (isRelational.value ? FORMATS : FORMATS.filter((f) => f.value !== "sql")));
 // 切换到非关系型连接时，若之前选了 SQL 格式则回退到 CSV，避免无效选择。
 watch(connName, () => { if (!isRelational.value && format.value === "sql") format.value = "csv"; });
@@ -170,13 +171,20 @@ function restart() {
               <datalist id="import-db"><option v-for="d in databases" :key="d.name" :value="d.name"></option></datalist>
             </div>
             <div class="field">
-              <label class="field-label">{{ isRelational ? '目标表' : '目标集合' }}<span v-if="format !== 'sql'" class="req"> *</span></label>
+              <label class="field-label">{{ isRelational ? '目标表' : isES ? '目标索引' : '目标集合' }}<span v-if="format !== 'sql'" class="req"> *</span></label>
               <select v-model="tableName">
-                <option value="">{{ dbName ? `选择${isRelational ? '表' : '集合'}…` : '请先选择数据库' }}</option>
+                <option value="">{{ dbName ? `选择${isRelational ? '表' : isES ? '索引' : '集合'}…` : '请先选择数据库' }}</option>
                 <option v-for="t in tables" :key="t.name" :value="t.name">{{ t.name }}</option>
               </select>
             </div>
           </div>
+        </div>
+        <div v-if="isES && format !== 'sql'" class="alert alert-info">
+          <Icon name="info" :size="14" />
+          <span>
+            Elasticsearch 每批数据通过 <code>_bulk</code> NDJSON 一次写入；JSON / NDJSON 文件每行一个文档，
+            可带 <code>_id</code> 指定文档 ID（不会写入 _source）。先「预览」核对将要发送的 bulk 内容再导入。
+          </span>
         </div>
         <div class="alert alert-info">
           <Icon name="info" :size="14" />
@@ -234,7 +242,10 @@ function restart() {
             </div>
             <div class="col span-2" style="gap: 8px">
               <label v-if="needHeader" class="check-line"><input type="checkbox" v-model="hasHeader" /> 首行为表头（列名）</label>
-              <label class="check-line"><input type="checkbox" v-model="transaction" /> 使用事务（任一批失败则整体回滚）</label>
+              <label v-if="!isES" class="check-line"><input type="checkbox" v-model="transaction" /> 使用事务（任一批失败则整体回滚）</label>
+              <span v-if="isES" class="field-hint">
+                Elasticsearch 没有跨文档事务：每批一次 <code>_bulk</code>，逐条动作各自原子；失败时会在结果中列出具体错误。
+              </span>
             </div>
           </div>
         </div>

@@ -70,6 +70,16 @@ func (a *App) ImportFile(ctx context.Context, conn string, ref domain.ObjectRef,
 	if err != nil {
 		return ImportOutcome{}, err
 	}
+	// JSON/NDJSON 额外保留原始文档文本，供文档型数据库（如 Elasticsearch）无损回写。
+	var rawDocs []string
+	if format == "json" {
+		if rawDocs, err = readRawJSONDocuments(path); err != nil {
+			return ImportOutcome{}, err
+		}
+		if len(rawDocs) != len(rows) {
+			rawDocs = nil
+		}
+	}
 	out := ImportOutcome{Format: format, Rows: len(rows)}
 	if len(rows) == 0 {
 		return out, domain.NewError(domain.CodeValidation, "import", "文件中没有可导入的数据行")
@@ -83,6 +93,7 @@ func (a *App) ImportFile(ctx context.Context, conn string, ref domain.ObjectRef,
 	if opts.DryRun {
 		previews, err := a.PreviewDataEdit(ctx, conn, domain.EditRequest{
 			Ref: ref, Edits: edits[:minInt(20, len(edits))],
+			Documents: sliceDocuments(rawDocs, 0, minInt(20, len(edits))),
 		})
 		if err != nil {
 			return out, err
@@ -95,6 +106,7 @@ func (a *App) ImportFile(ctx context.Context, conn string, ref domain.ObjectRef,
 		end := minInt(start+opts.BatchSize, len(edits))
 		res, err := a.ApplyDataEdit(ctx, conn, domain.EditRequest{
 			Ref: ref, Edits: edits[start:end], Transaction: opts.Transaction,
+			Documents: sliceDocuments(rawDocs, start, end),
 		})
 		if err != nil {
 			return out, fmt.Errorf("第 %d~%d 行导入失败: %w", start+1, end, err)
@@ -327,8 +339,9 @@ func readXLSX(path, sheet string) ([][]string, error) {
 	return records, nil
 }
 
-// readJSONRecords 接受 JSON 对象数组、单个对象或 NDJSON（每行一个对象）。
-func readJSONRecords(path string) ([]string, []map[string]*string, error) {
+// parseJSONDocuments 接受 JSON 对象数组、单个对象或 NDJSON（每行一个对象），
+// 同时返回每个文档的原样 JSON 文本，二者一一对应。
+func parseJSONDocuments(path string) ([]map[string]any, []string, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, nil, domain.WrapError(domain.CodeValidation, "import", err, "读取 JSON 文件失败")
@@ -338,11 +351,19 @@ func readJSONRecords(path string) ([]string, []map[string]*string, error) {
 		return nil, nil, domain.NewError(domain.CodeValidation, "import", "JSON 文件为空")
 	}
 	var documents []map[string]any
+	var raw []string
 	if data[0] == '[' {
 		dec := json.NewDecoder(bytes.NewReader(data))
 		dec.UseNumber()
 		if err := dec.Decode(&documents); err != nil {
 			return nil, nil, domain.WrapError(domain.CodeValidation, "import", err, "解析 JSON 数组失败")
+		}
+		for _, doc := range documents {
+			line, err := json.Marshal(doc)
+			if err != nil {
+				return nil, nil, domain.WrapError(domain.CodeValidation, "import", err, "序列化 JSON 文档失败")
+			}
+			raw = append(raw, string(line))
 		}
 	} else {
 		scanner := bufio.NewScanner(bytes.NewReader(data))
@@ -360,12 +381,43 @@ func readJSONRecords(path string) ([]string, []map[string]*string, error) {
 					"解析 JSON 对象失败（第 %d 行）", len(documents)+1)
 			}
 			documents = append(documents, doc)
+			raw = append(raw, string(line))
 		}
 		if err := scanner.Err(); err != nil {
 			return nil, nil, domain.WrapError(domain.CodeValidation, "import", err, "读取 JSON 文件失败")
 		}
 	}
+	return documents, raw, nil
+}
+
+func readJSONRecords(path string) ([]string, []map[string]*string, error) {
+	documents, _, err := parseJSONDocuments(path)
+	if err != nil {
+		return nil, nil, err
+	}
 	return documentsToRows(documents)
+}
+
+// readRawJSONDocuments 返回每个文档的原始 JSON 文本（文档型导入的无损通道）。
+func readRawJSONDocuments(path string) ([]string, error) {
+	_, raw, err := parseJSONDocuments(path)
+	return raw, err
+}
+
+func sliceDocuments(docs []string, start, end int) []string {
+	if len(docs) == 0 {
+		return nil
+	}
+	if start >= len(docs) {
+		return nil
+	}
+	if end > len(docs) {
+		end = len(docs)
+	}
+	if start >= end {
+		return nil
+	}
+	return docs[start:end]
 }
 
 func documentsToRows(documents []map[string]any) ([]string, []map[string]*string, error) {

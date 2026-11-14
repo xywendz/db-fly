@@ -1049,6 +1049,7 @@ export const Kind = {
     KindOracle: "oracle",
     KindSQLite: "sqlite",
     KindRedis: "redis",
+    KindElasticsearch: "elasticsearch",
 };
 
 /**
@@ -1328,6 +1329,7 @@ export const QueryLanguage = {
     LangMongoFilter: "mongo_filter",
     LangMongoPipeline: "mongo_pipeline",
     LangRedis: "redis",
+    LangESDSL: "es_dsl",
 };
 
 /**

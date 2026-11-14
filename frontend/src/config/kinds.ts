@@ -49,6 +49,7 @@ export const KIND_ORDER: Kind[] = [
   "oracle",
   "sqlite",
   "mongodb",
+  "elasticsearch",
   "redis",
 ];
 
@@ -195,6 +196,38 @@ export const KIND_FORMS: Record<Kind, KindForm> = {
       { key: "clientname", label: "客户端名称", placeholder: "可选" },
     ],
     defaults: { host: "127.0.0.1", port: 6379, database: "0", params: {} },
+  },
+  elasticsearch: {
+    kind: "elasticsearch",
+    label: "Elasticsearch",
+    icon: "search",
+    badge: "badge-warn",
+    summary: "文档 / 检索引擎，按索引浏览 JSON 文档，使用 Query DSL 检索，_bulk 批量导入。",
+    tips: [
+      "默认端口 9200，TLS 填 true 使用 https",
+      "auth=apikey 时密码栏填 API Key",
+      "命名空间分隔符默认 .（shop.users → 库 shop / 索引 users）",
+    ],
+    hostLabel: "主机地址 *",
+    hostPlaceholder: "127.0.0.1",
+    databaseLabel: "默认逻辑库",
+    databasePlaceholder: "default（留空亦可）",
+    showPort: true,
+    showUser: true,
+    showPassword: true,
+    showDatabase: true,
+    showTLS: true,
+    extras: [
+      { key: "auth", label: "认证方式", placeholder: "basic / apikey / none" },
+      { key: "namespaceSeparator", label: "命名空间分隔符", placeholder: "默认 .；填 none 关闭分组" },
+      { key: "pathPrefix", label: "路径前缀", placeholder: "反向代理路径，如 /es" },
+      { key: "refresh", label: "bulk 后刷新", placeholder: "true / false / wait_for" },
+      { key: "apiVersion", label: "API 版本头", placeholder: "Serverless 可选" },
+    ],
+    defaults: {
+      host: "127.0.0.1", port: 9200, database: "default",
+      params: { auth: "basic", namespaceSeparator: "." },
+    },
   },
 };
 

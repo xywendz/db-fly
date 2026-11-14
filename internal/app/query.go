@@ -55,6 +55,8 @@ func (a *App) prepareQuery(ctx context.Context, conn string, q domain.Query) (do
 				q.Language = domain.LangRedis
 			case caps.Has(domain.CapMongoFilter):
 				q.Language = domain.LangMongoFilter
+			case caps.Has(domain.CapESDSL):
+				q.Language = domain.LangESDSL
 			}
 		}
 	}
