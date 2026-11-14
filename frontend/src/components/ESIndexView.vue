@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { useWorkspace, type Tab } from "@/stores/workspace";
 import * as api from "@/api/client";
-import type { ColumnSpec, Script } from "@/types/domain";
+import type { ColumnSpec, Script, SchemaChange } from "@/types/domain";
 import Icon from "./ui/Icon.vue";
 
 const props = defineProps<{ tab: Tab }>();
@@ -10,7 +10,11 @@ const store = useWorkspace();
 
 const db = props.tab.database ?? props.tab.ref?.database ?? "";
 const initialName = props.tab.ref?.name ?? "";
-const isCreate = !initialName;
+const isCreate = !initialName && props.tab.mode !== "modify";
+const isModify = !!initialName && props.tab.mode === "modify";
+// 在「索引定义」查看页内直接切入修改（无需单独的右键项 / 独立 tab）。
+const editing = ref(false);
+const isEditing = computed(() => isModify || editing.value);
 
 const name = ref(initialName);
 const shards = ref(1);
@@ -80,6 +84,29 @@ function buildDefinition() {
   };
 }
 
+// 修改模式：把「新增字段 / 高级 mappings / 高级 settings」组装为结构化 SchemaChange 列表。
+// 后端 AlterTableScript 据此生成 PUT /_mapping（新增字段）与 PUT /_settings（更新设置）。
+function buildChanges(): SchemaChange[] {
+  const changes: SchemaChange[] = [];
+  for (const f of fields.value) {
+    if (f.name.trim()) {
+      changes.push({
+        kind: "add_column",
+        column: { name: f.name.trim(), type: f.type, nullable: true, primary_key: false },
+      });
+    }
+  }
+  const mappings = parseJSONObject(advancedMappings.value, "高级 mappings");
+  if (mappings) {
+    changes.push({ kind: "add_column", options: JSON.stringify(mappings) });
+  }
+  const settings = parseJSONObject(advancedSettings.value, "高级 settings");
+  if (settings) {
+    changes.push({ kind: "collection_options", options: JSON.stringify(settings) });
+  }
+  return changes;
+}
+
 async function preview() {
   error.value = "";
   script.value = null;
@@ -117,6 +144,54 @@ async function apply() {
   }
 }
 
+async function previewModify() {
+  error.value = "";
+  script.value = null;
+  busy.value = true;
+  try {
+    const changes = buildChanges();
+    if (!changes.length) {
+      error.value = "请至少新增一个字段，或在「高级 mappings / settings」中填写一项。";
+      return;
+    }
+    script.value = await api.previewAlterTable(
+      props.tab.conn,
+      { database: db, name: initialName },
+      changes,
+    );
+  } catch (e: any) {
+    error.value = e?.message ?? String(e);
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function applyModify() {
+  if (!script.value) return;
+  const ok = await store.confirm({
+    title: "修改 Elasticsearch 索引 Mapping",
+    message:
+      `将在连接「${props.tab.conn}」上修改索引 ${physical.value}。` +
+      "Elasticsearch 只允许新增字段 / 更新 settings，已有字段类型不可修改。请先核对下方请求。",
+    confirmText: "执行脚本",
+  });
+  if (!ok) return;
+  busy.value = true;
+  error.value = "";
+  try {
+    await api.applyScript(props.tab.conn, script.value);
+    applied.value = true;
+    script.value = null;
+    store.invalidateObjects(props.tab.conn, db);
+    delete (store.dbCache as Record<string, any>)[props.tab.conn];
+    store.notify(`索引 ${physical.value} 的 mapping 已更新`, "ok");
+  } catch (e: any) {
+    error.value = e?.message ?? String(e);
+  } finally {
+    busy.value = false;
+  }
+}
+
 async function copyScript() {
   const text = script.value?.statements.join("\n") ?? "";
   if (!text) {
@@ -144,6 +219,18 @@ async function copyDefinition() {
   }
 }
 
+function onPreview() {
+  return isEditing.value ? previewModify() : preview();
+}
+function onApply() {
+  return isEditing.value ? applyModify() : apply();
+}
+function cancelEdit() {
+  editing.value = false;
+  script.value = null;
+  error.value = "";
+}
+
 onMounted(async () => {
   if (isCreate) return;
   busy.value = true;
@@ -161,7 +248,7 @@ onMounted(async () => {
   <div class="page">
     <div class="toolbar page-head">
       <Icon name="search" :size="15" />
-      <strong>{{ isCreate ? "新建索引" : "索引定义" }}</strong>
+      <strong>{{ isCreate ? "新建索引" : isEditing ? "修改 Mapping" : "索引定义" }}</strong>
       <span class="badge">{{ props.tab.conn }}</span>
       <span v-if="db" class="badge">{{ db }}</span>
       <span class="grow"></span>
@@ -173,11 +260,31 @@ onMounted(async () => {
         <Icon name="alert" :size="14" /> <span>{{ error }}</span>
       </div>
       <div v-if="applied" class="alert alert-ok">
-        <Icon name="check" :size="14" /> <span>索引已创建，可在左侧资源树刷新后浏览或导入数据。</span>
+        <Icon name="check" :size="14" />
+        <span>{{ isCreate ? "索引已创建，可在左侧资源树刷新后浏览或导入数据。" : "索引 mapping 已更新，可在左侧资源树刷新后浏览。" }}</span>
       </div>
 
-      <template v-if="isCreate">
-        <div class="card">
+      <!-- 修改模式：展示当前 mapping 作为参考（只读） -->
+      <div v-if="isEditing" class="card">
+        <div class="card-head">
+          <Icon name="code" :size="14" /><h4>当前索引定义（只读参考）</h4>
+          <span class="grow"></span>
+          <button class="btn btn-sm" :disabled="!definition" @click="copyDefinition">
+            <Icon name="copy" :size="12" /> 复制
+          </button>
+        </div>
+        <div class="card-body">
+          <pre class="mono script-preview">{{ definition || "正在读取…" }}</pre>
+          <div class="alert alert-info">
+            <Icon name="info" :size="14" />
+            <span>Elasticsearch 只允许通过下方表单新增字段（PUT /_mapping）或更新 settings（PUT /_settings），已有字段类型不可修改。</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 新建 / 修改 共用：索引配置与映射编辑 -->
+      <template v-if="isCreate || isEditing">
+        <div v-if="isCreate" class="card">
           <div class="card-head"><Icon name="settings" :size="14" /><h4>1 · 索引配置</h4></div>
           <div class="card-body form-grid three">
             <div class="field">
@@ -207,7 +314,7 @@ onMounted(async () => {
 
         <div class="card">
           <div class="card-head">
-            <Icon name="table" :size="14" /><h4>2 · 字段 mapping</h4>
+            <Icon name="table" :size="14" /><h4>{{ isCreate ? "2 · 字段 mapping" : "1 · 新增字段 mapping" }}</h4>
             <span class="grow"></span>
             <button class="btn btn-sm" @click="fields.push({ name: '', type: 'text' })">
               <Icon name="plus" :size="12" /> 添加字段
@@ -224,34 +331,37 @@ onMounted(async () => {
               </button>
             </div>
             <span class="field-hint">
-              字段会转换为 mappings.properties（text 自动带 .keyword 子字段）；含点路径的嵌套字段由动态映射展开。
+              新增字段会转换为 mappings.properties（text 自动带 .keyword 子字段）；含点路径的嵌套字段由动态映射展开。
             </span>
           </div>
         </div>
 
         <div class="card">
-          <div class="card-head"><Icon name="code" :size="14" /><h4>3 · 高级选项（可选）</h4></div>
+          <div class="card-head"><Icon name="code" :size="14" /><h4>{{ isCreate ? "3 · 高级选项（可选）" : "2 · 高级选项（可选）" }}</h4></div>
           <div class="card-body form-grid">
             <div class="field">
-              <label class="field-label">完整 settings JSON（覆盖上方配置）</label>
-              <textarea v-model="advancedSettings" class="mono" rows="5" placeholder='{"analysis":{"analyzer":{...}}}'></textarea>
+              <label class="field-label">{{ isCreate ? "完整 settings JSON（覆盖上方配置）" : "高级 mappings JSON（PUT /_mapping 的请求体）" }}</label>
+              <textarea v-model="advancedMappings" class="mono" rows="5" :placeholder='isCreate ? "{\"analysis\":{...}}" : "{\"properties\":{\"title\":{\"type\":\"text\"}}} 或 {\"title\":{\"type\":\"text\"}}"'></textarea>
             </div>
             <div class="field">
-              <label class="field-label">完整 mappings JSON（覆盖字段列表；字段可直接写，无需包 properties）</label>
-              <textarea v-model="advancedMappings" class="mono" rows="5" placeholder='{"title":{"type":"text"}} 或 {"properties":{"title":{"type":"text"}}}'></textarea>
+              <label class="field-label">{{ isCreate ? "完整 mappings JSON（覆盖字段列表；字段可直接写，无需包 properties）" : "高级 settings JSON（PUT /_settings 的请求体）" }}</label>
+              <textarea v-model="advancedSettings" class="mono" rows="5" :placeholder='isCreate ? "{\"title\":{\"type\":\"text\"}} 或 {\"properties\":{\"title\":{\"type\":\"text\"}}}" : "{\"number_of_replicas\":2,\"refresh_interval\":\"30s\"}"'></textarea>
             </div>
           </div>
         </div>
 
         <div class="card">
           <div class="card-head">
-            <Icon name="eye" :size="14" /><h4>4 · 脚本预览与执行</h4>
+            <Icon name="eye" :size="14" /><h4>{{ isCreate ? "4 · 脚本预览与执行" : "3 · 脚本预览与执行" }}</h4>
             <span class="grow"></span>
-            <button class="btn btn-sm" :disabled="busy || !name.trim()" @click="preview">
+            <button v-if="editing && !isModify" class="btn btn-sm" @click="cancelEdit">
+              <Icon name="close" :size="12" /> 取消
+            </button>
+            <button class="btn btn-sm" :disabled="busy || (isCreate && !name.trim())" @click="onPreview">
               <span v-if="busy" class="spinner" style="width: 12px; height: 12px"></span>
               <Icon v-else name="refresh" :size="12" /> 生成脚本
             </button>
-            <button class="btn btn-sm btn-primary" :disabled="busy || !script" @click="apply">
+            <button class="btn btn-sm btn-primary" :disabled="busy || !script" @click="onApply">
               <Icon name="check" :size="12" /> 确认执行
             </button>
             <button class="btn btn-sm" :disabled="!script" @click="copyScript">
@@ -260,7 +370,9 @@ onMounted(async () => {
           </div>
           <div class="card-body col" style="gap: 8px">
             <div v-if="!script" class="field-hint">
-              先生成 Elasticsearch 请求（PUT /索引 + settings / mappings）并核对，再确认执行。执行前会二次确认。
+              {{ isCreate
+                ? "先生成 Elasticsearch 请求（PUT /索引 + settings / mappings）并核对，再确认执行。执行前会二次确认。"
+                : "先生成 Elasticsearch 请求（PUT /_mapping 新增字段 / PUT /_settings 更新设置）并核对，再确认执行。" }}
             </div>
             <template v-else>
               <div v-if="script.warnings?.length" class="alert alert-warn">
@@ -276,10 +388,14 @@ onMounted(async () => {
         </div>
       </template>
 
+      <!-- 仅查看（非修改）：索引定义 PUT 脚本 -->
       <template v-else>
         <div class="card">
           <div class="card-head"><Icon name="code" :size="14" /><h4>索引定义（可回放的 PUT 脚本）</h4>
             <span class="grow"></span>
+            <button class="btn btn-sm" :disabled="!definition" @click="editing = true">
+              <Icon name="edit" :size="12" /> 修改
+            </button>
             <button class="btn btn-sm" :disabled="!definition" @click="copyDefinition">
               <Icon name="copy" :size="12" /> 复制
             </button>

@@ -16,6 +16,7 @@ import StatusBar from "./components/StatusBar.vue";
 import QueryView from "./components/QueryView.vue";
 import TableDataView from "./components/TableDataView.vue";
 import StructureView from "./components/StructureView.vue";
+import ESStructureView from "./components/ESStructureView.vue";
 import TableDesignerView from "./components/TableDesignerView.vue";
 import ExportView from "./components/ExportView.vue";
 import ImportView from "./components/ImportView.vue";
@@ -226,6 +227,7 @@ onUnmounted(() => {
             <ESConsoleView v-if="activeTab && activeTab.type === 'query' && activeIsES" :key="activeTab.id" :tab="activeTab" />
             <QueryView v-else-if="activeTab && activeTab.type === 'query'" :key="activeTab.id" :tab="activeTab" />
             <TableDataView v-else-if="activeTab && activeTab.type === 'data'" :key="activeTab.id" :tab="activeTab" />
+            <ESStructureView v-else-if="activeTab && activeTab.type === 'structure' && activeIsES" :key="activeTab.id" :tab="activeTab" />
             <StructureView v-else-if="activeTab && activeTab.type === 'structure'" :key="activeTab.id" :tab="activeTab" />
             <TableDesignerView v-else-if="activeTab && activeTab.type === 'designer'" :key="activeTab.id" :tab="activeTab" />
             <ExportView v-else-if="activeTab && activeTab.type === 'export'" :key="activeTab.id" :tab="activeTab" />

@@ -30,13 +30,16 @@ import (
 const defaultAddr = "127.0.0.1:8080"
 
 func main() {
-	addr := flag.String("addr", env("DB_FLY_WEB_ADDR", defaultAddr), "HTTP 监听地址，例如 127.0.0.1:8080 或 :8080")
+	addr := flag.String("addr", env("DB_FLY_WEB_ADDR", defaultAddr), "HTTP 监听地址(host:port)，例如 127.0.0.1:8080 或 :8080；与 -port 同时使用时取其主机部分")
+	port := flag.String("port", env("DB_FLY_WEB_PORT", ""), "HTTP 监听端口（可选）；设置后覆盖 addr 中的端口部分，例如 8080")
 	dataDir := flag.String("data-dir", env("DB_FLY_DATA_DIR", ""), "账号表与各用户数据根目录（默认 ~/.db-fly）")
 	signup := flag.Bool("allow-signup", envBool("DB_FLY_ALLOW_SIGNUP", true), "是否开放用户注册")
 	invite := flag.String("invite", env("DB_FLY_WEB_TOKEN", ""), "注册邀请码（可选；公网建议设置）")
 	uploadDir := flag.String("upload-dir", env("DB_FLY_UPLOAD_DIR", ""), "导入文件暂存根目录（默认各用户目录内 uploads/）")
 	logBase := flag.String("log-dir", env("DB_FLY_LOG_DIR", ""), "日志根目录（默认可执行文件所在目录；实际写入其中 logs/ 子目录）")
 	flag.Parse()
+
+	listenAddr := resolveAddr(*addr, *port)
 
 	// 初始化日志：在「运行目录/logs」下输出标准日志与数据库操作审计日志。
 	loggingBase := *logBase
@@ -54,7 +57,7 @@ func main() {
 	log.Printf("日志目录: %s/logs", loggingBase)
 
 	// 对外监听且未指定邀请码时自动生成，避免公网被任意注册。
-	if !isLoopback(*addr) && *invite == "" {
+	if !isLoopback(listenAddr) && *invite == "" {
 		generated, err := randomToken()
 		if err != nil {
 			log.Printf("生成注册邀请码失败: %v", err)
@@ -90,7 +93,7 @@ func main() {
 	}
 
 	server := &http.Server{
-		Addr:              *addr,
+		Addr:              listenAddr,
 		Handler:           api.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
@@ -108,12 +111,26 @@ func main() {
 	}()
 
 	log.Printf("db-fly Web 已启动: http://%s (版本 %s, 数据目录 %s, 注册 %s)",
-		*addr, bridge.Version, mgr.UsersDir(), map[bool]string{true: "开放", false: "关闭"}[*signup])
+		listenAddr, bridge.Version, mgr.UsersDir(), map[bool]string{true: "开放", false: "关闭"}[*signup])
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Printf("HTTP 服务异常: %v", err)
 	}
 	_ = api.Close()
 	_ = mgr.Close()
+}
+
+// resolveAddr 合并 -addr 与可选的 -port：port 非空时只取其端口部分覆盖到
+// addr 的端口上（addr 仅作主机来源；":8080" 形式的空主机保留为全接口监听）。
+func resolveAddr(addr, port string) string {
+	if port == "" {
+		return addr
+	}
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		// addr 未带端口，整体当作主机名使用。
+		host = addr
+	}
+	return net.JoinHostPort(host, port)
 }
 
 func env(key, fallback string) string {

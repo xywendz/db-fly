@@ -53,6 +53,14 @@ docker run -d --name db-fly -p 8080:8080 \
 
 打开 `http://localhost:8080/login` 注册首个账号（`DB_FLY_WEB_TOKEN` 为邀请码，公网部署务必设置）。如需关闭公开注册，追加 `-e DB_FLY_ALLOW_SIGNUP=false`。
 
+二进制直接运行时可用 `-addr` / `-port` 自定义监听地址与端口（也可通过环境变量 `DB_FLY_WEB_ADDR` / `DB_FLY_WEB_PORT`）：
+
+```bash
+db-fly-server -port 9000                 # 监听 127.0.0.1:9000（端口覆盖默认 addr）
+db-fly-server -addr 0.0.0.0:8080         # 监听全部网卡 8080
+DB_FLY_WEB_PORT=8080 db-fly-server       # 等价环境变量写法
+```
+
 ### 命令行 CLI
 
 ```bash
@@ -95,14 +103,30 @@ task build                 # → dist/db-fly-gui.exe（PowerShell）
 # 或仅环境/代码校验（gofmt/build/vet/test + vue-tsc + vite build）
 task verify
 
-# Web 模式（全平台）：前端 web 产物嵌入 Go 二进制
+# Web 模式（全平台，PowerShell）：前端 web 产物嵌入 Go 二进制
 task build:web            # → dist/db-fly-server
+# Web 模式（Linux/macOS/Git Bash）：等价于上述任务，默认 linux/amd64
+bash build/web.sh         # → dist/db-fly-server
+VERSION=v1.0.0 GOOS_TARGET=linux GOARCH_TARGET=arm64 bash build/web.sh
+
 # 构建两者
 task build:all
 
 # 纯命令行（任意平台）
 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o dist/dbctl ./cmd/dbctl
 ```
+
+#### 通过 GitHub Actions 自动构建
+
+仓库根目录的 `.github/workflows/build.yml` 会在 `push`（main/master）、PR 与标签时自动构建：
+
+- **CLI**：`linux/amd64`、`windows/amd64` 两个静态二进制（`CGO_ENABLED=0`）。
+- **Web 服务端**：`linux/amd64` 单文件二进制（前端内嵌）。
+- **桌面 GUI**：`windows/amd64` 的 `db-fly-gui.exe`（自动安装 `wails3` CLI 生成图标）。
+
+推送形如 `v1.0.0` 的标签时，工作流会把上述三份产物打包上传到对应的 **GitHub Release**（含 `gzip` 压缩包）。本地等价命令见上。
+
+> CI 中 Web/CLI 版本号由 `git describe --tags --always` 注入；本地构建可传 `VERSION`、`GOOS_TARGET` / `GOARCH_TARGET` / `OUTPUT` 等环境变量覆盖。
 
 前端自身命令：`cd frontend && npm install`，开发热更新 `npm run dev`（GUI）/`npm run dev:web`（Web）；类型检查 `npm run typecheck`；产物构建 `npm run build` / `npm run build:web`。GUI 与 Web 通过编译期别名 `@/runtime` 物理隔离，GUI 产物不含 fetch 代码、Web 产物不含 `@wailsio/runtime`。
 
@@ -164,6 +188,9 @@ CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o dist/dbctl ./cmd/dbctl
 - **建库 / 建索引**：「新建逻辑库」创建组合索引模板（ES 7.8+），7.7 及以前自动降级到 legacy `_template`；「新建索引」生成 `PUT /<index>`，字段映射为 `mappings.properties`，支持分片 / 副本 / `dynamic` / 别名。
 - **数据编辑**：增删改走 `POST /_bulk`（NDJSON）；导入时优先使用原始 JSON 文档文本，保留标量类型与嵌套结构，NDJSON 导出 → 导入可无损往返。
 - **导入 / 导出**：支持 CSV / TSV / Excel / JSON / NDJSON / SQL；ES 额外提供 **NDJSON**（每行原始文档，可回导）与 **ES Bulk**（可直接 `curl --data-binary @file` 回放），并支持自定义 DSL 作为导出数据源。
+- **修改 Mapping**：索引右键「索引定义 (PUT 脚本)」打开索引定义页，点击页内「修改」即进入修改模式，可新增字段（`PUT /<index>/_mapping`）或更新 settings（`PUT /<index>/_settings`）；Elasticsearch 只允许新增字段 / 更新设置，已有字段类型不可修改。右键已不再提供独立的「修改 Mapping」菜单项。
+- **复制索引**：索引右键「复制索引（结构）」会创建一个名称不同、但 mapping 与 settings 完全相同的新索引；「复制索引（含数据）」在此基础上再执行 `POST /_reindex` 把文档一并复制过去。别名不会被复制（避免与原索引冲突）。（旧版的「复制 Mapping / 复制索引结构」仅是复制文本，已移除。）
+- **独立的表结构页**：ES 索引右键「查看字段 / 设置」打开专用页（非关系型 StructureView），展示字段 mapping、settings、aliases 与可重放的 `PUT /<index>` 定义，不再显示 SQL 建表语句；右键「复制索引（结构）」可一键克隆出结构相同、名称不同的新索引。
 
 ---
 

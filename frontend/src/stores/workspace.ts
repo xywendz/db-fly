@@ -24,8 +24,8 @@ export interface Tab {
   /** 建表/导入/导出页使用的目标库与表。 */
   database?: string;
   table?: string;
-  /** designer: create = 新表，alter = 修改已有表。 */
-  mode?: "create" | "alter";
+  /** designer: create = 新表，alter = 修改已有表；es-index: modify = 修改已有索引的 mapping/settings。 */
+  mode?: "create" | "alter" | "modify";
   format?: string;
   /** redis-key：已存在的键默认以只读方式打开，点击「修改」进入编辑态。 */
   readOnly?: boolean;
@@ -438,15 +438,19 @@ export const useWorkspace = defineStore("workspace", () => {
     leftCollapsed.value = false;
   }
 
-  /** ES 索引设计器页签：name 为空表示新建索引；非空表示查看已有索引的 mapping/settings。 */
-  function openESIndexTab(conn: string, database: string, name = "") {
+  /** ES 索引设计器页签：
+   *  - name 为空：新建索引；
+   *  - name 非空、mode 缺省：查看已有索引的 mapping/settings（只读 PUT 脚本）；
+   *  - name 非空、mode="modify"：修改已有索引的 mapping/settings。 */
+  function openESIndexTab(conn: string, database: string, name = "", mode?: "modify") {
     if (name) {
       const existing = tabs.value.find(
         (t) =>
           t.type === "es-index" &&
           t.conn === conn &&
           t.database === database &&
-          (t.ref?.name ?? "") === name,
+          (t.ref?.name ?? "") === name &&
+          (t.mode ?? "") === (mode ?? ""),
       );
       if (existing) {
         activeTabId.value = existing.id;
@@ -455,13 +459,19 @@ export const useWorkspace = defineStore("workspace", () => {
       }
     }
     const id = `ei${++tabSeq}`;
+    const title = !name
+      ? `新建索引 · ${database}`
+      : mode === "modify"
+        ? `修改 Mapping · ${name}`
+        : `索引 · ${name}`;
     tabs.value.push({
       id,
       type: "es-index",
       conn,
       database,
       ref: { database, name },
-      title: name ? `索引 · ${name}` : `新建索引 · ${database}`,
+      mode,
+      title,
     });
     activeTabId.value = id;
     activeConn.value = conn;

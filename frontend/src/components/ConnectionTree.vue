@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { useWorkspace } from "@/stores/workspace";
 import * as api from "@/api/client";
-import type { ConnectionConfig, ObjectInfo, Script } from "@/types/domain";
+import type { ColumnSpec, ConnectionConfig, ObjectInfo, Script } from "@/types/domain";
 import type { MenuItem } from "@/types/ui";
 import Icon from "./ui/Icon.vue";
 import EmptyState from "./ui/EmptyState.vue";
@@ -212,6 +212,75 @@ async function copyName(name: string) {
     store.notify(`已复制：${name}`, "ok", 1800);
   } catch {
     store.setStatus("剪贴板不可用", "warn");
+  }
+}
+
+// 复刻后端 physicalIndex 的命名空间规则，用于 reindex 目标物理索引名计算。
+function physicalIndex(cfg: ConnectionConfig | undefined, database: string, name: string): string {
+  const n = name.trim();
+  if (!n) return n;
+  let sep = ".";
+  const raw = cfg?.params?.["namespaceSeparator"];
+  if (raw !== undefined) {
+    const v = raw.trim();
+    sep = /^none$|^off$/i.test(v) ? "" : v;
+  }
+  const db = (database || "").trim();
+  if (db === "" || db === "default" || sep === "") return n;
+  const prefix = db + sep;
+  return n.startsWith(prefix) ? n : prefix + n;
+}
+
+/** Elasticsearch 索引：「复制索引」= 以新名称创建一个结构（及可选数据）相同的新索引。 */
+async function cloneIndex(conn: string, db: string, o: ObjectInfo, withData: boolean) {
+  const newName = await store.promptText({
+    title: withData ? `复制索引（含数据）· ${o.name}` : `复制索引（结构）· ${o.name}`,
+    message: "将创建一个结构相同、但名称不同的新索引。请输入新索引名：",
+    label: "新索引名",
+    value: `${o.name}_copy`,
+    confirmText: "预览脚本",
+  });
+  if (!newName || newName.trim() === o.name) return;
+  try {
+    const def = await api.showCreateObject(conn, { database: db, name: o.name });
+    const nl = def.indexOf("\n");
+    const jsonStr = nl >= 0 ? def.slice(nl + 1) : def;
+    const obj = JSON.parse(jsonStr);
+    // 复制 settings + mappings，丢弃 aliases（避免新索引与原索引别名冲突）。
+    const options: Record<string, any> = {};
+    if (obj.settings) options.settings = obj.settings;
+    if (obj.mappings) options.mappings = obj.mappings;
+    const tableDef = {
+      ref: { database: db, name: newName.trim() },
+      columns: [] as ColumnSpec[],
+      options: JSON.stringify(options),
+      if_not_exists: false,
+    };
+    const script = await api.previewCreateTable(conn, tableDef);
+    const done = await applyScriptWithConfirm(conn, script, {
+      title: `复制索引 · ${o.name}`,
+      confirmText: "创建索引",
+    });
+    if (!done) return;
+    if (withData) {
+      const physicalOld = def.split("\n")[0].replace(/^PUT \//, "").trim();
+      const physicalNew = physicalIndex(store.connections.find((c) => c.name === conn), db, newName.trim());
+      try {
+        await api.execStatement({
+          conn,
+          database: db,
+          statement: `POST /_reindex\n${JSON.stringify({ source: { index: physicalOld }, dest: { index: physicalNew } })}`,
+        });
+        store.notify(`索引 ${newName.trim()} 已创建并复制数据`, "ok");
+      } catch (e: any) {
+        store.setStatus(`结构已创建，但数据复制失败：${e?.message ?? e}`, "warn");
+      }
+    } else {
+      store.notify(`索引 ${newName.trim()} 已创建`, "ok");
+    }
+    await refreshObjects(conn, db);
+  } catch (e: any) {
+    store.setStatus(`复制索引失败：${e?.message ?? e}`, "error");
   }
 }
 
@@ -602,6 +671,9 @@ function menuObj(e: MouseEvent, conn: string, db: string, o: ObjectInfo) {
       { label: "浏览文档", icon: "table", action: () => store.openDataTab(conn, ref) },
       { label: "索引定义 (PUT 脚本)", icon: "code", action: () => store.openESIndexTab(conn, db, o.name) },
       { label: "查看字段 / 设置", icon: "column", action: () => store.openStructureTab(conn, ref) },
+      { separator: true },
+      { label: "复制索引（结构）", icon: "copy", action: () => cloneIndex(conn, db, o, false) },
+      { label: "复制索引（含数据）", icon: "copy", action: () => cloneIndex(conn, db, o, true) },
       { separator: true },
       { label: "导入数据", icon: "upload", action: () => store.openImportTab(conn, db, o.name) },
       { label: "导出数据", icon: "download", action: () => store.openExportTab(conn, db, o.name) },

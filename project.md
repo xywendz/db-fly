@@ -513,6 +513,40 @@ go build -trimpath -ldflags "-s -w -H windowsgui -X github.com/db-fly/db-fly/int
 > `generate syso` 基于纯 Go 的 `winres`，不需要 `windres`/gcc；`build/windows/wails.exe.manifest` 提供 DPI 感知与 Common-Controls，`info.json` 提供文件属性里的版本信息。
 > `frontend/public/logo.png` 是同一图标的副本，供窗口内页面通过 `index.html` 的 `<link rel="icon">` 显示；`build/gui.ps1` 每次构建都会从 `logo.png` 重新复制，保持三处同步。
 
+#### 3.4.2 Web 模式构建（全平台）
+
+B/S 模式把 Vue 前端（`--mode web` 模板）内嵌进 Go 二进制，产物为 `cmd/db-fly-server`，纯 Go、`CGO_ENABLED=0`，可在 Linux 直接作为单文件服务运行。
+
+**Windows（PowerShell，推荐）**
+
+```powershell
+./build/web.ps1
+# → dist/db-fly-server（默认 GOOS=linux GOARCH=amd64）
+GOOS_TARGET=windows GOARCH_TARGET=amd64 ./build/web.ps1   # 可选：交叉编译 Windows 版
+```
+
+**Linux / macOS / Git Bash**
+
+```bash
+bash build/web.sh
+# → dist/db-fly-server（默认 linux/amd64，Version=git describe）
+
+VERSION=v1.0.0 bash build/web.sh
+GOOS_TARGET=linux GOARCH_TARGET=arm64 OUTPUT=dist/db-fly-server bash build/web.sh
+```
+
+两个脚本等价：① 取版本号（注入 `internal/bridge.Version`）；② `npm run build:web` 构建前端 → `frontend/dist-web`；③ 复制到 `internal/webui/dist`（`//go:embed`）；④ 纯 Go 链接 `./cmd/db-fly-server`。可用 `VERSION` / `GOOS_TARGET` / `GOARCH_TARGET` / `OUTPUT` 覆盖。
+
+**直接构建（等价，不产前端资源）**
+
+```bash
+CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X github.com/db-fly/db-fly/internal/bridge.Version=dev" -o dist/db-fly-server ./cmd/db-fly-server
+```
+
+> 未执行前端构建时，`internal/webui/dist` 仅含占位 `index.html`，运行时页面无法加载；务必先构建前端再链接。
+
+**运行参数**（详见 §5.7）：`-addr`（默认 `127.0.0.1:8080`）、`-port`（覆盖端口）、`-data-dir`、`-allow-signup`、`-invite`、`-upload-dir`、`-log-dir`；相同功能亦由 `DB_FLY_WEB_ADDR` / `DB_FLY_WEB_PORT` / `DB_FLY_DATA_DIR` / `DB_FLY_ALLOW_SIGNUP` / `DB_FLY_WEB_TOKEN` / `DB_FLY_UPLOAD_DIR` / `DB_FLY_LOG_DIR` 提供。
+
 ### 3.5 测试
 
 ```powershell
@@ -604,6 +638,21 @@ dbctl info
 | `GOOS_TARGET` / `GOARCH_TARGET` / `OUTPUT` | `build/cli.sh` 的交叉编译目标与输出路径 |
 | `DB_FLY_MASTER_KEY` | Linux 下凭证加密主密钥（兼容旧变量 `DBCLIENT_MASTER_KEY`）；未设置时使用机器本地派生密钥并打印告警 |
 | `MYSQL_DSN` | MySQL 集成测试 DSN |
+
+### 3.9 GitHub Actions 自动构建
+
+仓库根目录的 `.github/workflows/build.yml` 在 `main`/`master` 分支推送、PR 与标签时自动运行：
+
+| Job | 平台 / 产物 | 说明 |
+| --- | --- | --- |
+| `cli` | `linux/amd64`、`windows/amd64` 的 `dbctl[.exe]` | 纯 Go 静态编译，`CGO_ENABLED=0`，矩阵跨平台 |
+| `web-server` | `linux/amd64` 的 `db-fly-server` | 先 `npm run build:web` 再内嵌 Go 链接 |
+| `gui` | `windows/amd64` 的 `db-fly-gui.exe` | `windows-latest` 自动 `go install wails3` 后执行 `build/gui.ps1` |
+| `release` | 仅 `v*` 标签触发 | 把上述产物（含 `gzip` 压缩包）上传到对应 GitHub Release |
+
+本地复现等价的 Web 构建：`bash build/web.sh`（Linux）或 `./build/web.ps1`（Windows）。CLI 与 GUI 的本地命令见 §3.3 / §3.4。
+
+版本号在 CI 中由 `git describe --tags --always` 注入（`internal/cli.Version` / `internal/bridge.Version`）；本地可用 `VERSION`、`GOOS_TARGET` / `GOARCH_TARGET` / `OUTPUT` 覆盖（见 `build/cli.sh`、`build/web.sh`）。
 
 ---
 
@@ -714,7 +763,8 @@ graph TD
 
 | 变量 | 默认值 | 用途 |
 | --- | --- | --- |
-| `DB_FLY_WEB_ADDR` | `127.0.0.1:8080`（镜像内 `:8080`） | HTTP 监听地址 |
+| `DB_FLY_WEB_ADDR` | `127.0.0.1:8080`（镜像内 `:8080`） | HTTP 监听地址（host:port） |
+| `DB_FLY_WEB_PORT` | 空（取 `DB_FLY_WEB_ADDR` 的端口部分） | HTTP 监听端口（可选）；设置后覆盖 `DB_FLY_WEB_ADDR` 中的端口 |
 | `DB_FLY_WEB_TOKEN` | 空 | 注册邀请码（可选）；见第 6 章 |
 | `DB_FLY_ALLOW_SIGNUP` | `true` | 是否开放注册 |
 | `DB_FLY_DATA_DIR` | `~/.db-fly`（镜像内 `/data`） | 账号表与各用户数据根目录 |
@@ -886,6 +936,11 @@ ES 无「数据库 / 表 / 行」概念，用**索引命名空间**把它映射�
 | `dropObject` | `DELETE /<physical>`（别名走 `_alias`） | 不可恢复，Warnings 明示。 |
 | `showCreate` | `GET /<physical>/_settings` + `_mapping` | 拼成可重放的 `PUT /<index> {...}` JSON 文本。 |
 | `Apply` | 顺序执行 | 任一失败即停，返回 `ExecOutcome`；HTTP 错误统一映射成 `domain.Error`。 |
+
+**前端交互**：索引右键菜单包含 ES 专属项。ES 的连接类型 `kind="elasticsearch"`，所有功能页均独立、不复用关系型组件：
+- 「查看字段 / 设置」打开专用 `ESStructureView`（`type="structure"` 且 `activeIsES` 时由 `App.vue` 路由到此，不再使用关系型 `StructureView`）；页面展示字段 mapping、settings、aliases 与可重放的 `PUT /<index>` 定义（由 `ShowCreateObject` 解析 `settings` / `mappings` / `aliases`），不再出现 SQL 建表语句 / 列 / 索引 / 外键等关系型概念。
+- 「修改 Mapping」入口已收归索引定义页：索引右键「索引定义 (PUT 脚本)」打开 `ESIndexView`（view 模式），页面内「修改」按钮就地切入 modify 模式（同一组件，复用 `previewAlterTable` → `AlterTableScript`）：新增字段表单转为 `add_column` 变更（`PUT /_mapping`），高级 mappings / settings 文本框分别作为 `add_column` / `collection_options` 的 `options` 请求体（`PUT /_mapping`、`PUT /_settings`）。右键菜单不再含独立的「修改 Mapping」项；`ESStructureView`（查看字段 / 设置）也不再提供「修改 Mapping」按钮，避免多处入口冗余。Elasticsearch 只允许新增字段与更新 settings，已有字段类型不可修改，UI 已据此给出提示与二次确认。
+- 「复制索引」是真正的克隆操作（非文本复制）：「复制索引（结构）」用 `ShowCreateObject` 取出当前 `settings` / `mappings`，丢弃 aliases，构造新的 `TableDefinition`（新索引名）并 `previewCreateTable` → `Apply` 创建一个结构相同、名称不同的新索引；「复制索引（含数据）」再追加 `POST /_reindex`（`source.index` = 原物理索引，`dest.index` = 新物理索引，物理名由 `physicalIndex` 规则推算）把文档一并复制。旧版的「复制 Mapping / 复制索引结构」仅是复制文本，已移除以避免与「索引定义」视图重复。
 
 类型映射 `esFieldType()`：`INT*/BIGINT/SMALLINT→long`、`FLOAT/DOUBLE/DECIMAL/NUMBER→double`、`BOOL→boolean`、`DATE/DATETIME/TIMESTAMP→date`、`BINARY/BLOB→binary`、`JSON/OBJECT→object`、字符串默认 `text` 并附 `fields.keyword`（`ignore_above:256`），`KEYWORD` 显式指定时用 `keyword`；`_id` 字段跳过。
 
