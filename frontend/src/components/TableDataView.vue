@@ -14,6 +14,7 @@ import type {
 } from "@/types/domain";
 import ResultGrid from "./ResultGrid.vue";
 import Icon from "./ui/Icon.vue";
+import FieldSelect from "./ui/FieldSelect.vue";
 import ContextMenu from "./ui/ContextMenu.vue";
 import type { MenuItem } from "@/types/ui";
 
@@ -486,14 +487,6 @@ async function deleteDocByIndex(i: number) {
       <span class="badge">{{ props.tab.conn }}</span>
       <span v-if="refObj.database" class="badge">{{ refObj.database }}</span>
       <span class="divider-v"></span>
-      <button
-        class="btn btn-sm"
-        :class="{ active: !store.leftCollapsed }"
-        :title="store.leftCollapsed ? '显示左侧资源管理器' : '隐藏左侧资源管理器'"
-        @click="store.leftCollapsed = !store.leftCollapsed"
-      >
-        <Icon name="panel-left" :size="13" /> {{ store.leftCollapsed ? "显示连接树" : "连接树" }}
-      </button>
       <button class="btn" :disabled="loading" title="重新加载数据" @click="refresh">
         <Icon name="refresh" :size="13" /> 刷新
       </button>
@@ -533,9 +526,7 @@ async function deleteDocByIndex(i: number) {
             <option value="AND">AND</option><option value="OR">OR</option>
           </select>
           <span v-else style="width: 78px" class="dim">WHERE</span>
-          <select v-model="c.column" style="min-width: 120px">
-            <option v-for="n in colNames" :key="n" :value="n">{{ n }}</option>
-          </select>
+          <FieldSelect v-model="c.column" :fields="colNames" placeholder="模糊搜索列…" width="160px" />
           <select v-model="c.operator" style="width: 88px">
             <option>=</option><option>!=</option><option>&gt;</option><option>&lt;</option>
             <option>&gt;=</option><option>&lt;=</option><option>LIKE</option><option>IN</option>
@@ -555,9 +546,7 @@ async function deleteDocByIndex(i: number) {
         <div v-if="!sorts.length" class="faint" style="font-size: 11px">不排序 · 使用数据库默认顺序</div>
         <div v-for="(s, i) in sorts" :key="'s' + i" class="row" style="gap: 6px">
           <span class="dim" style="width: 78px">ORDER BY</span>
-          <select v-model="s.column" style="min-width: 120px">
-            <option v-for="n in colNames" :key="n" :value="n">{{ n }}</option>
-          </select>
+          <FieldSelect v-model="s.column" :fields="colNames" placeholder="模糊搜索列…" width="160px" />
           <label class="check-line"><input type="checkbox" v-model="s.desc" /> 降序 (DESC)</label>
           <button class="btn btn-icon" title="移除排序" @click="sorts.splice(i, 1)">
             <Icon name="close" :size="13" />
@@ -569,7 +558,7 @@ async function deleteDocByIndex(i: number) {
           </button>
           <button class="btn btn-sm" @click="clearFilters">清空条件</button>
           <span class="grow"></span>
-          <span class="faint" style="font-size: 11px">列选项来自最近一次加载的结果集</span>
+          <span class="faint" style="font-size: 11px">列选项来自最近一次加载的结果集，支持模糊实时搜索（如输入 usr 匹配 user_name）</span>
         </div>
       </div>
     </div>

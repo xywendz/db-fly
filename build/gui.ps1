@@ -63,12 +63,17 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Write-Host "==> Windows icon resource: $syso"
 
 # ---- 5. Go build (pure Go; wails3 v3 needs no CGO on Windows) ----
+# Optional slim build: set DB_FLY_TAGS="custom_providers db_mysql db_sqlite" to
+# link only the selected database drivers. See internal/provider/all/all.go.
 $env:CGO_ENABLED = "0"
 $env:GOOS = "windows"
+$tags = $env:DB_FLY_TAGS
+$tagArgs = @()
+if ($tags) { $tagArgs = @("-tags", $tags) }
 
 New-Item -ItemType Directory -Force -Path dist | Out-Null
-go build -trimpath `
-  -ldflags "-s -w -H windowsgui -X github.com/db-fly/db-fly/internal/bridge.Version=$version" `
+go build -trimpath @tagArgs `
+  -ldflags "-s -w -buildid= -H windowsgui -X github.com/db-fly/db-fly/internal/bridge.Version=$version" `
   -o dist/db-fly-gui.exe ./cmd/db-fly-gui
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
@@ -82,4 +87,23 @@ if ($buildInfo -notmatch "github.com/wailsapp/wails/v3") {
     throw "The binary does not contain the wails3 GUI entry (stub built by mistake). Check the build tags in cmd/db-fly-gui."
 }
 
-Write-Host "Built dist/db-fly-gui.exe (pure Go / CGO_ENABLED=0, version $version, icon from logo.png)"
+# ---- 7. Optional UPX compression ----
+# If upx is on PATH, compress the exe to roughly one third of its size.
+# Set DB_FLY_NO_UPX=1 to skip. A failed compression keeps the uncompressed exe.
+if ($env:DB_FLY_NO_UPX -ne '1') {
+    $upx = Get-Command upx -ErrorAction SilentlyContinue
+    if ($upx) {
+        $before = (Get-Item $bin).Length
+        & upx --best $bin
+        if ($LASTEXITCODE -eq 0 -and (Test-Path $bin)) {
+            $after = (Get-Item $bin).Length
+            Write-Host ("==> UPX: {0:N1} MB -> {1:N1} MB" -f ($before / 1MB), ($after / 1MB))
+        } else {
+            Write-Host "==> UPX failed; keeping the uncompressed exe"
+        }
+    }
+}
+
+$sizeMB = [math]::Round((Get-Item $bin).Length / 1MB, 1)
+Write-Host "Built dist/db-fly-gui.exe ($sizeMB MB, pure Go / CGO_ENABLED=0, version $version, icon from logo.png)"
+if ($tags) { Write-Host "Linked database providers: $tags" } else { Write-Host "Linked database providers: all (set DB_FLY_TAGS for a slim build)" }

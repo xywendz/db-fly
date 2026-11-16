@@ -398,9 +398,6 @@ async function rename() {
       <button class="btn" :disabled="busy" @click="rename">
         <Icon name="edit" :size="13" /> 重命名
       </button>
-      <button class="btn" @click="copyDDL" title="复制 DDL 到剪贴板">
-        <Icon name="copy" :size="13" /> 复制 DDL
-      </button>
       <span class="grow"></span>
       <span v-if="changeCount" class="badge badge-warn">待应用 {{ changeCount }} 项</span>
       <button class="btn btn-danger" :disabled="busy" @click="dropObject">

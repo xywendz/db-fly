@@ -177,16 +177,24 @@ onUnmounted(() => {
     />
 
     <div class="body">
-      <aside v-if="!store.leftCollapsed" class="left" :style="{ width: store.leftWidth + 'px' }">
-        <ConnectionTree @edit-conn="openConnDialog" />
+      <template v-if="!store.leftCollapsed">
+        <aside class="left" :style="{ width: store.leftWidth + 'px' }">
+          <ConnectionTree @edit-conn="openConnDialog" />
+        </aside>
+        <div
+          class="splitter"
+          :class="{ dragging: dragging === 'left' }"
+          title="拖动调整宽度"
+          @mousedown.prevent="startDrag('left', $event)"
+        ></div>
+      </template>
+      <aside v-else class="left-rail" title="展开资源管理器" @click="store.leftCollapsed = false">
+        <button class="rail-toggle" title="展开资源管理器" @click="store.leftCollapsed = false">
+          <Icon name="chevrons-right" :size="16" />
+        </button>
+        <span class="rail-label">资源管理器</span>
+        <span v-if="store.openConns.length" class="rail-count" :title="`${store.openConns.length} 个连接已建立会话`">{{ store.openConns.length }}</span>
       </aside>
-      <div
-        v-if="!store.leftCollapsed"
-        class="splitter"
-        :class="{ dragging: dragging === 'left' }"
-        title="拖动调整宽度"
-        @mousedown.prevent="startDrag('left', $event)"
-      ></div>
 
       <main class="center">
         <div class="tabbar">
@@ -336,6 +344,23 @@ onUnmounted(() => {
 .app { display: flex; flex-direction: column; height: 100%; width: 100%; overflow: hidden; }
 .body { display: flex; flex: 1; min-height: 0; width: 100%; overflow: hidden; }
 .left { flex-shrink: 0; min-width: 0; overflow: hidden; }
+.left-rail {
+  flex-shrink: 0; width: 32px; display: flex; flex-direction: column; align-items: center; gap: 12px;
+  padding: 8px 0; background: var(--surface); border-right: 1px solid var(--border); cursor: pointer;
+}
+.left-rail:hover { background: var(--surface-2); }
+.rail-toggle {
+  width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
+  background: var(--surface-2); color: var(--text-dim); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); cursor: pointer;
+}
+.left-rail:hover .rail-toggle { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-hover); }
+.rail-label { writing-mode: vertical-rl; letter-spacing: .16em; font-size: 11px; color: var(--text-dim); user-select: none; }
+.rail-count {
+  min-width: 18px; height: 18px; padding: 0 4px; display: flex; align-items: center; justify-content: center;
+  border-radius: 9px; background: var(--accent-soft); border: 1px solid var(--accent);
+  color: var(--accent-hover); font-size: var(--fs-xxs); font-weight: 600;
+}
 /* 覆盖全局 .center 工具类的居中属性，保证页签栏贴左起排并铺满宽度。 */
 .center { display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; flex: 1; width: 100%; min-width: 0; overflow: hidden; }
 .center > .tabbar { width: 100%; justify-content: flex-start; }

@@ -319,7 +319,6 @@ export const useWorkspace = defineStore("workspace", () => {
     if (existing) {
       activeTabId.value = existing.id;
       activeConn.value = conn;
-      leftCollapsed.value = false;
       return;
     }
     const id = `d${++tabSeq}`;
@@ -327,8 +326,6 @@ export const useWorkspace = defineStore("workspace", () => {
     activeTabId.value = id;
     activeConn.value = conn;
     activeDb.value = ref.database;
-    // 浏览表数据时始终保留左侧资源管理器，方便切换对象。
-    leftCollapsed.value = false;
   }
 
   /** Redis 键搜索页：默认不加载全部 key，由用户在页内按模式检索（SCAN MATCH）。 */
@@ -339,7 +336,6 @@ export const useWorkspace = defineStore("workspace", () => {
     if (existing) {
       activeTabId.value = existing.id;
       activeConn.value = conn;
-      leftCollapsed.value = false;
       return;
     }
     const id = `k${++tabSeq}`;
@@ -354,7 +350,6 @@ export const useWorkspace = defineStore("workspace", () => {
     activeTabId.value = id;
     activeConn.value = conn;
     activeDb.value = database;
-    leftCollapsed.value = false;
   }
 
   /** Redis 键编辑器页签：双击 key 或「新建键」打开；key 为空表示新建。 */
@@ -372,7 +367,6 @@ export const useWorkspace = defineStore("workspace", () => {
       if (existing) {
         activeTabId.value = existing.id;
         activeConn.value = conn;
-        leftCollapsed.value = false;
         return;
       }
     }
@@ -390,7 +384,6 @@ export const useWorkspace = defineStore("workspace", () => {
     activeTabId.value = id;
     activeConn.value = conn;
     activeDb.value = database;
-    leftCollapsed.value = false;
   }
 
   /** Redis「新建数据库」：把指定逻辑库下标加入树并显示，便于浏览尚未出现在 keyspace 的空库。 */
@@ -419,7 +412,6 @@ export const useWorkspace = defineStore("workspace", () => {
       if (existing) {
         activeTabId.value = existing.id;
         activeConn.value = conn;
-        leftCollapsed.value = false;
         return;
       }
     }
@@ -435,7 +427,6 @@ export const useWorkspace = defineStore("workspace", () => {
     activeTabId.value = id;
     activeConn.value = conn;
     activeDb.value = database;
-    leftCollapsed.value = false;
   }
 
   /** ES 索引设计器页签：
@@ -454,7 +445,6 @@ export const useWorkspace = defineStore("workspace", () => {
       );
       if (existing) {
         activeTabId.value = existing.id;
-        leftCollapsed.value = false;
         return;
       }
     }
@@ -476,7 +466,6 @@ export const useWorkspace = defineStore("workspace", () => {
     activeTabId.value = id;
     activeConn.value = conn;
     activeDb.value = database;
-    leftCollapsed.value = false;
   }
 
   function openStructureTab(conn: string, ref: ObjectRef) {
@@ -507,7 +496,6 @@ export const useWorkspace = defineStore("workspace", () => {
       );
       if (existing) {
         activeTabId.value = existing.id;
-        leftCollapsed.value = false;
         return;
       }
     }
@@ -525,7 +513,6 @@ export const useWorkspace = defineStore("workspace", () => {
     activeTabId.value = id;
     activeConn.value = conn;
     activeDb.value = database;
-    leftCollapsed.value = false;
   }
 
   /** 导出向导页签：同一连接 + 库 + 表只保留一个。 */
@@ -535,7 +522,6 @@ export const useWorkspace = defineStore("workspace", () => {
     );
     if (existing) {
       activeTabId.value = existing.id;
-      leftCollapsed.value = false;
       return;
     }
     const id = `x${++tabSeq}`;
@@ -550,7 +536,6 @@ export const useWorkspace = defineStore("workspace", () => {
     activeTabId.value = id;
     activeConn.value = conn;
     activeDb.value = database;
-    leftCollapsed.value = false;
   }
 
   /** 导入引导页签。 */
@@ -560,7 +545,6 @@ export const useWorkspace = defineStore("workspace", () => {
     );
     if (existing) {
       activeTabId.value = existing.id;
-      leftCollapsed.value = false;
       return;
     }
     const id = `i${++tabSeq}`;
@@ -576,7 +560,6 @@ export const useWorkspace = defineStore("workspace", () => {
     activeTabId.value = id;
     activeConn.value = conn;
     activeDb.value = database;
-    leftCollapsed.value = false;
   }
 
   function renameTab(id: string, title: string) {

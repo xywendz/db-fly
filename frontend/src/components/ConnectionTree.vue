@@ -750,6 +750,9 @@ function objIcon(o: ObjectInfo) {
       <span class="row" style="gap: 6px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em">
         <Icon name="layers" :size="14" /> 资源管理器
       </span>
+      <span v-if="store.connections.length" class="badge badge-info" :title="`${store.openConns.length} / ${store.connections.length} 个连接已建立会话`">
+        {{ store.openConns.length }}/{{ store.connections.length }}
+      </span>
       <span class="grow"></span>
       <button class="btn btn-icon" title="新建连接" @click="$emit('edit-conn', null)">
         <Icon name="plus" :size="14" />
@@ -759,6 +762,9 @@ function objIcon(o: ObjectInfo) {
       </button>
       <button class="btn btn-icon" title="刷新全部" @click="refreshAll">
         <Icon name="refresh" :size="14" />
+      </button>
+      <button class="btn btn-icon" title="折叠资源管理器" @click="store.leftCollapsed = true">
+        <Icon name="panel-left" :size="14" />
       </button>
     </div>
 
