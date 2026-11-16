@@ -252,18 +252,32 @@ function restart() {
       </template>
 
       <template v-else>
-        <div v-if="busy" class="empty"><span class="spinner" style="width: 22px; height: 22px"></span><p>正在解析并导入…</p></div>
+        <div v-if="busy" class="empty"><span class="spinner" style="width: 22px; height: 22px"></span><p>正在解析并导入，请勿重复操作…</p></div>
         <template v-else>
           <EmptyState
             v-if="!result"
             :compact="true"
-            icon="upload"
-            title="准备就绪"
-            description="点击「预览」核对将要写入的内容，确认无误后点「导入数据」真实写入。"
+            :icon="error ? 'alert' : 'upload'"
+            :title="error ? '导入未完成' : '准备就绪'"
+            :description="error
+              ? '导入过程中出现错误，请查看下方提示，修正后返回修改步骤重试。'
+              : '点击「预览」核对将要写入的内容，确认无误后点「导入数据」真实写入。'"
           />
           <div v-else class="card">
             <div class="card-head"><Icon name="check" :size="14" /><h4>{{ dryRun ? "预览结果" : "导入结果" }}</h4></div>
             <div class="card-body col" style="gap: 10px">
+              <div v-if="!dryRun && result.applied > 0" class="alert alert-ok">
+                <Icon name="check" :size="14" />
+                <span class="grow">导入已完成，成功写入 {{ result.applied }} 行数据。</span>
+              </div>
+              <div v-else-if="dryRun" class="alert alert-info">
+                <Icon name="eye" :size="14" />
+                <span class="grow">预览已生成，尚未写入数据库。确认无误后请返回第 3 步点击「导入数据」完成写入。</span>
+              </div>
+              <div v-else class="alert alert-warn">
+                <Icon name="alert" :size="14" />
+                <span class="grow">本次未写入任何数据，请检查下方明细或错误提示。</span>
+              </div>
               <div class="row wrap" style="gap: 6px">
                 <span class="badge badge-info">格式 {{ result.format }}</span>
                 <span class="badge">解析 {{ result.rows }} 行</span>
@@ -273,6 +287,7 @@ function restart() {
               <pre v-if="result.preview?.length" class="code result-preview">{{ result.preview.join("\n") }}</pre>
               <div class="row" style="gap: 6px">
                 <span class="grow"></span>
+                <button class="btn btn-sm" @click="goto(3)"><Icon name="settings" :size="12" /> 返回修改</button>
                 <button class="btn btn-sm" @click="restart"><Icon name="refresh" :size="12" /> 再导入一次</button>
               </div>
             </div>
@@ -284,16 +299,21 @@ function restart() {
     </div>
 
     <div class="toolbar page-foot">
-      <button class="btn" :disabled="step === 1" @click="prev"><Icon name="arrow-left" :size="13" /> 上一步</button>
+      <button v-if="step < 4" class="btn" :disabled="step === 1" @click="prev"><Icon name="arrow-left" :size="13" /> 上一步</button>
       <button v-if="step < 3" class="btn btn-primary" @click="next">下一步 <Icon name="arrow-right" :size="13" /></button>
-      <template v-else>
+      <template v-else-if="step === 3">
         <span class="grow"></span>
-        <button class="btn" :disabled="busy" @click="goto(3)"><Icon name="settings" :size="13" /> 修改选项</button>
         <button class="btn" :disabled="busy" @click="run(true)"><Icon name="eye" :size="13" /> 预览</button>
         <button class="btn btn-primary" :disabled="busy" @click="run(false)">
           <span v-if="busy" class="spinner" style="width: 12px; height: 12px"></span>
-          <Icon v-else name="upload" :size="13" /> 导入数据
+          <Icon v-else name="upload" :size="13" /> {{ busy ? "正在导入…" : "导入数据" }}
         </button>
+      </template>
+      <template v-else>
+        <span class="grow"></span>
+        <span v-if="result && !error" class="badge badge-ok"><Icon name="check" :size="11" /> {{ dryRun ? "预览完成" : "导入完成" }}</span>
+        <button class="btn" @click="goto(3)"><Icon name="settings" :size="13" /> 返回修改</button>
+        <button class="btn btn-primary" @click="restart"><Icon name="refresh" :size="13" /> 再导入一次</button>
       </template>
     </div>
   </div>

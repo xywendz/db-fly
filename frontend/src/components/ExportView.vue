@@ -37,6 +37,8 @@ const sqlTarget = ref(props.tab.table ?? "");
 const busy = ref(false);
 const error = ref("");
 const outcome = ref<QueryOutcome | null>(null);
+// 最近一次导出完成的结果；用于控制完成态横幅与按钮状态，避免重复点击导出。
+const exported = ref<{ name: string; detail: string } | null>(null);
 /** data = 仅数据；structure_data = 表结构 + 数据。 */
 const exportMode = ref<"data" | "structure_data">("data");
 const ddl = ref("");
@@ -105,6 +107,16 @@ watch(connName, () => {
 
 watch([source, exportMode, tableName], () => { ddl.value = ""; });
 watch(source, () => { dbContent.value = ""; });
+// 任一导出配置变更即清除"已导出"状态，避免完成提示与实际配置不一致。
+watch(
+  () => [
+    connName.value, dbName.value, tableName.value, source.value, format.value,
+    exportMode.value, maxRows.value, sql.value, dbStructure.value, dbData.value,
+    includeHeader.value, nullText.value, targetIndex.value,
+  ],
+  () => { exported.value = null; },
+  { flush: "sync" },
+);
 
 function textOf(cell: Cell | undefined): string {
   if (!cell || cell.null) return nullText.value;
@@ -357,10 +369,13 @@ function saveFile(content: string, name: string) {
 }
 
 async function download() {
+  exported.value = null;
   if (isDatabase.value) {
     if (!dbContent.value) { await loadDatabase(); if (!dbContent.value) return; }
     const name = `${dbName.value.trim() || "database"}.sql`;
     saveFile(dbContent.value, name);
+    const n = dbContent.value.split("\n").filter(Boolean).length;
+    exported.value = { name, detail: `约 ${n} 行 SQL 脚本` };
     store.setStatus(`已导出数据库 ${dbName.value} → ${name}`, "ok");
     return;
   }
@@ -369,6 +384,7 @@ async function download() {
     const name = `${dbName.value.trim() || "redis"}.redis`;
     saveFile(redisContent.value, name);
     const n = redisContent.value.split("\n").filter(Boolean).length;
+    exported.value = { name, detail: `${n} 条 Redis 命令` };
     store.setStatus(`已导出 ${n} 条 Redis 命令 → ${name}`, "ok");
     return;
   }
@@ -379,6 +395,10 @@ async function download() {
   if (extra) {
     window.setTimeout(() => saveFile(schemaContent(), schemaFileName.value), 400);
   }
+  exported.value = {
+    name: fileName.value + (extra ? ` + ${schemaFileName.value}` : ""),
+    detail: `${rows.value.length} 行 · ${columns.value.length} 列`,
+  };
   store.setStatus(
     `已导出 ${rows.value.length} 行 → ${fileName.value}${extra ? ` + ${schemaFileName.value}` : ""}`,
     "ok",
@@ -426,6 +446,16 @@ async function copy() {
       <span class="grow"></span>
       <span v-if="!isDatabase && outcome" class="badge badge-ok">{{ rows.length }} 行 · {{ columns.length }} 列</span>
       <span v-else-if="redisMode && redisContent" class="badge badge-ok">{{ redisContent.split('\n').filter(Boolean).length }} 条命令</span>
+    </div>
+
+    <div v-if="exported" class="alert alert-ok export-done">
+      <Icon name="check" :size="16" />
+      <span class="grow">
+        <strong>导出已完成</strong> · {{ exported.name }}（{{ exported.detail }}）已生成，请到浏览器下载目录查看。
+      </span>
+      <button class="btn btn-icon" style="width: 20px; height: 20px" title="关闭提示" @click="exported = null">
+        <Icon name="close" :size="12" />
+      </button>
     </div>
 
     <div class="page-body scroll">
@@ -635,8 +665,12 @@ async function copy() {
         </template>
       </span>
       <span class="grow"></span>
+      <span v-if="exported" class="badge badge-ok"><Icon name="check" :size="11" /> 已导出</span>
       <button class="btn" :disabled="(isDatabase ? !dbContent : redisMode ? !redisContent : !outcome) || busy" @click="copy"><Icon name="copy" :size="13" /> 复制内容</button>
-      <button class="btn btn-primary" :disabled="busy" @click="download"><Icon name="download" :size="13" /> 生成并下载</button>
+      <button class="btn btn-primary" :disabled="busy" @click="download">
+        <span v-if="busy" class="spinner" style="width: 12px; height: 12px"></span>
+        <Icon v-else name="download" :size="13" /> {{ busy ? "正在生成…" : exported ? "重新下载" : "生成并下载" }}
+      </button>
     </div>
   </div>
 </template>
@@ -652,4 +686,5 @@ async function copy() {
 .ddl-preview { margin-top: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 10px; background: var(--surface-2); min-width: 0; }
 .ddl-preview pre { max-height: 160px; overflow: auto; white-space: pre-wrap; margin: 0; font-size: 10px; line-height: 1.6; }
 .field-hint.warn { color: var(--warn); }
+.export-done { flex-shrink: 0; margin: 8px 10px 0; padding: 9px 12px; font-size: var(--fs-sm); }
 </style>
