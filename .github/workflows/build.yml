@@ -129,6 +129,18 @@ jobs:
           for f in dbctl dbctl.exe db-fly-server db-fly-gui.exe; do
             [ -f "$f" ] && { gzip -kf "$f"; chmod +x "$f" 2>/dev/null || true; }
           done
+          # Wails updater unpacks .zip; a bare .gz cannot be swapped into place.
+          rm -f db-fly-gui-windows-amd64.zip
+          if [ -f db-fly-gui.exe ]; then
+            zip -j db-fly-gui-windows-amd64.zip db-fly-gui.exe
+          fi
+          # Digest sidecar consumed by the GUI's GitHub update provider.
+          : > checksums.txt
+          for f in *; do
+            [ -f "$f" ] || continue
+            [ "$f" = "checksums.txt" ] && continue
+            sha256sum "$f" >> checksums.txt
+          done
           ls -la
       - name: Publish release
         uses: softprops/action-gh-release@v2

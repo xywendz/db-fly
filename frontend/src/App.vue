@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, onUnmounted } from "vue";
 import { useWorkspace, type Tab, type TabType } from "@/stores/workspace";
 import * as api from "@/api/client";
-import { runtimeMode } from "@/runtime";
+import { checkForUpdates, runtimeMode } from "@/runtime";
 import type { AppInfo, ConnectionConfig } from "@/types/domain";
 import type { MenuItem } from "@/types/ui";
 import Icon from "./components/ui/Icon.vue";
@@ -87,6 +87,16 @@ async function showAbout() {
   } catch {
     about.value = "无法获取运行时信息";
     aboutInfo.value = null;
+  }
+}
+
+async function requestUpdateCheck() {
+  about.value = "";
+  try {
+    await checkForUpdates();
+    store.notify("已开始检查更新");
+  } catch (e: any) {
+    store.notify(`检查更新失败：${e?.message ?? e}`, "error");
   }
 }
 
@@ -334,6 +344,9 @@ onUnmounted(() => {
       </div>
       <template #footer>
         <span class="grow"></span>
+        <button v-if="runtimeMode === 'gui'" class="btn" title="从 GitHub Release 检查新版本" @click="requestUpdateCheck">
+          <Icon name="download" :size="14" /> 检查更新
+        </button>
         <button class="btn btn-primary" @click="about = ''">关闭</button>
       </template>
     </Modal>

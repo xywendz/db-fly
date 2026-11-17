@@ -14,6 +14,7 @@ import (
 
 	"github.com/db-fly/db-fly/internal/bootstrap"
 	"github.com/db-fly/db-fly/internal/bridge"
+	"github.com/db-fly/db-fly/internal/selfupdate"
 	// 注册全部数据库业务模块（各自 init() 自注册到 provider 注册中心）。
 	_ "github.com/db-fly/db-fly/internal/provider/all"
 )
@@ -67,6 +68,21 @@ func main() {
 			ApplicationShouldTerminateAfterLastWindowClosed: true,
 		},
 	})
+
+	// GitHub Release 自动更新：启动后检查一次，此后每 6 小时轮询；发现新版本时
+	// 由 Wails 内置更新窗口展示下载进度、校验结果和“重启并应用”按钮。
+	if err := selfupdate.Init(wailsApp.Updater, bridge.Version); err != nil {
+		log.Printf("自动更新初始化失败: %v", err)
+	} else {
+		wailsApp.Event.On(selfupdate.CheckEvent, func(_ *application.CustomEvent) {
+			go func() {
+				if err := selfupdate.CheckNow(wailsApp.Context(), wailsApp.Updater); err != nil {
+					log.Printf("检查更新失败: %v", err)
+				}
+			}()
+		})
+		selfupdate.StartBackgroundChecks(wailsApp.Context(), wailsApp.Updater)
+	}
 
 	// 创建应用后注入事件发射器：Bridge 通过包级变量把进度/通知转发到 wails 事件总线。
 	bridge.SetDefaultEmitter(emitter{wailsApp: wailsApp})

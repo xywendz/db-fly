@@ -86,6 +86,11 @@ function selectFile(): Promise<File | null> {
   });
 }
 
+// B/S 模式没有桌面更新流程；保留同名接口让共享组件保持同一形状。
+export async function checkForUpdates(): Promise<void> {
+  return;
+}
+
 export async function pickImportFile(): Promise<PickedFile | null> {
   const file = await selectFile();
   if (!file) return null;
