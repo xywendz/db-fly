@@ -249,3 +249,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ./build/verify.ps1
 ## 设计文档
 
 完整的业务设计、架构说明、能力矩阵与构建 / 部署细节见 [`project.md`](./project.md)。
+
+## github 发布
+git push origin <提交分支>
+git tag v1.0.0
+git push origin v1.0.0
