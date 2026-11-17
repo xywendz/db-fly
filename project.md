@@ -645,10 +645,9 @@ dbctl info
 
 | Job | 平台 / 产物 | 说明 |
 | --- | --- | --- |
-| `cli` | `linux/amd64`、`windows/amd64` 的 `dbctl[.exe]` | 纯 Go 静态编译，`CGO_ENABLED=0`，矩阵跨平台 |
 | `web-server` | `linux/amd64` 的 `db-fly-server` | 先 `npm run build:web` 再内嵌 Go 链接 |
 | `gui` | `windows/amd64` 的 `db-fly-gui.exe` | `windows-latest` 自动 `go install wails3` 后执行 `build/gui.ps1` |
-| `release` | 仅 `v*` 标签触发 | 把上述产物（含 `gzip` 压缩包）上传到对应 GitHub Release |
+| `release` | 仅 `v*` 标签触发 | 每个平台只上传一份归档：`db-fly-server-linux-amd64.tar.gz`、`db-fly-gui-windows-amd64.zip`，并附 `checksums.txt` |
 
 本地复现等价的 Web 构建：`bash build/web.sh`（Linux）或 `./build/web.ps1`（Windows）。CLI 与 GUI 的本地命令见 §3.3 / §3.4。
 

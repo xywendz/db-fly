@@ -120,11 +120,16 @@ CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o dist/dbctl ./cmd/dbctl
 
 仓库根目录的 `.github/workflows/build.yml` 会在 `push`（main/master）、PR 与标签时自动构建：
 
-- **CLI**：`linux/amd64`、`windows/amd64` 两个静态二进制（`CGO_ENABLED=0`）。
 - **Web 服务端**：`linux/amd64` 单文件二进制（前端内嵌）。
 - **桌面 GUI**：`windows/amd64` 的 `db-fly-gui.exe`（自动安装 `wails3` CLI 生成图标）。
 
-推送形如 `v1.0.0` 的标签时，工作流会把上述三份产物打包上传到对应的 **GitHub Release**（含 `gzip` 压缩包）。本地等价命令见上。
+推送形如 `v1.0.0` 的标签时，工作流会为每个平台只发布一份归档，避免原始文件与压缩文件重复：
+
+- `db-fly-server-linux-amd64.tar.gz`
+- `db-fly-gui-windows-amd64.zip`（供桌面端自动更新器使用）
+- `checksums.txt`
+
+本地等价命令见上。
 
 > CI 中 Web/CLI 版本号由 `git describe --tags --always` 注入；本地构建可传 `VERSION`、`GOOS_TARGET` / `GOARCH_TARGET` / `OUTPUT` 等环境变量覆盖。
 
