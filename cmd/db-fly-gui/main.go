@@ -11,6 +11,7 @@ import (
 	"log"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 
 	"github.com/db-fly/db-fly/internal/bootstrap"
 	"github.com/db-fly/db-fly/internal/bridge"
@@ -87,7 +88,7 @@ func main() {
 	// 创建应用后注入事件发射器：Bridge 通过包级变量把进度/通知转发到 wails 事件总线。
 	bridge.SetDefaultEmitter(emitter{wailsApp: wailsApp})
 
-	wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
+	window := wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:      "main",
 		Title:     "db-fly",
 		Width:     1280,
@@ -95,6 +96,21 @@ func main() {
 		MinWidth:  960,
 		MinHeight: 640,
 	})
+
+	// 点击窗口关闭按钮只隐藏到托盘；托盘菜单“退出”才真正结束进程。
+	window.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
+		window.Hide()
+		e.Cancel()
+	})
+
+	tray := wailsApp.SystemTray.New()
+	tray.SetIcon(appIcon)
+	trayMenu := wailsApp.Menu.New()
+	trayMenu.Add("显示窗口").OnClick(func(_ *application.Context) { window.Show().Focus() })
+	trayMenu.Add("隐藏窗口").OnClick(func(_ *application.Context) { window.Hide() })
+	trayMenu.AddSeparator()
+	trayMenu.Add("退出 db-fly").OnClick(func(_ *application.Context) { wailsApp.Quit() })
+	tray.AttachWindow(window).SetMenu(trayMenu)
 
 	wailsApp.OnShutdown(func() { _ = rt.Close() })
 

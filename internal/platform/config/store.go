@@ -89,8 +89,8 @@ type FileStore struct {
 }
 
 // DefaultDir 返回默认数据目录 ~/.db-fly。
-// 兼容升级：若新目录尚不存在但旧版 ~/.dbclient 存在，则继续使用旧目录，
-// 避免已有连接配置与凭证库在改名后失效。
+// 兼容升级：若旧版 ~/.dbclient 存在而新目录尚不存在，则把旧目录整体迁移到
+// ~/.db-fly，避免已有连接配置与凭证库丢失，同时保证所有入口使用同一目录。
 func DefaultDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -102,9 +102,16 @@ func DefaultDir() (string, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("检查数据目录失败: %w", err)
 	}
+
 	legacy := filepath.Join(home, ".dbclient")
 	if info, err := os.Stat(legacy); err == nil && info.IsDir() {
-		return legacy, nil
+		if err := os.Rename(legacy, dir); err != nil {
+			// 另一个进程可能刚完成迁移；重新检查目标目录即可。
+			if _, statErr := os.Stat(dir); statErr == nil {
+				return dir, nil
+			}
+			return "", fmt.Errorf("迁移旧数据目录 %s 到 %s 失败: %w", legacy, dir, err)
+		}
 	}
 	return dir, nil
 }

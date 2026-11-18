@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -72,40 +73,48 @@ func TestAppendHistoryKeepsNewestFirst(t *testing.T) {
 	}
 }
 
-// TestDefaultDirLegacyFallback 保证改名后已有 ~/.dbclient 配置不会失效。
-func TestDefaultDirLegacyFallback(t *testing.T) {
+// TestDefaultDirMigratesLegacy 保证旧 ~/.dbclient 会被迁移到 ~/.db-fly。
+func TestDefaultDirMigratesLegacy(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("USERPROFILE", home) // Windows
 	t.Setenv("HOME", home)        // Linux / macOS
+	want := filepath.Join(home, ".db-fly")
 
 	dir, err := DefaultDir()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := filepath.Join(home, ".db-fly"); dir != want {
-		t.Fatalf("应优先使用新目录: got %q want %q", dir, want)
+	if dir != want {
+		t.Fatalf("默认目录错误: got %q want %q", dir, want)
 	}
 
 	legacy := filepath.Join(home, ".dbclient")
 	if err := os.Mkdir(legacy, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	dir, err = DefaultDir()
-	if err != nil {
+	if err := os.WriteFile(filepath.Join(legacy, "config.json"), []byte("{}"), 0o600); err != nil {
 		t.Fatal(err)
-	}
-	if dir != legacy {
-		t.Fatalf("新目录不存在时应回退旧目录: got %q want %q", dir, legacy)
 	}
 
-	if err := os.Mkdir(filepath.Join(home, ".db-fly"), 0o700); err != nil {
-		t.Fatal(err)
-	}
 	dir, err = DefaultDir()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := filepath.Join(home, ".db-fly"); dir != want {
-		t.Fatalf("新目录存在后应切换回来: got %q want %q", dir, want)
+	if dir != want {
+		t.Fatalf("迁移后目录错误: got %q want %q", dir, want)
+	}
+	if _, err := os.Stat(legacy); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("旧目录应已迁移: stat legacy = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "config.json")); err != nil {
+		t.Fatalf("迁移后文件丢失: %v", err)
+	}
+
+	dir, err = DefaultDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dir != want {
+		t.Fatalf("新目录存在时应保持不变: got %q want %q", dir, want)
 	}
 }

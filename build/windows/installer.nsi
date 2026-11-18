@@ -1,8 +1,10 @@
-; db-fly Windows installer (NSIS 3, per-user).
+; db-fly Windows installer (NSIS 3, per-machine).
 ;
-; Installs to %LOCALAPPDATA%\Programs\db-fly so the Wails updater can replace
-; db-fly-gui.exe without administrator rights. User data/config lives in
-; ~/.db-fly and is intentionally NOT removed on uninstall.
+; Installs to C:\Program Files\db-fly by default and requires administrator
+; rights during setup. The installing user is granted Modify permission on the
+; install directory so the silent Wails updater can replace db-fly-gui.exe
+; without a UAC prompt on every launch. User data/config lives in ~/.db-fly
+; and is intentionally NOT removed on uninstall.
 ;
 ; Expected cwd when compiled: build/windows (see build/installer.ps1).
 ; Override with: makensis /DAPP_VERSION=1.2.3 /DAPP_VERSION_NUM=1.2.3.0 installer.nsi
@@ -23,10 +25,15 @@
 
 Name "${APP_NAME}"
 OutFile "..\..\dist\db-fly-setup-windows-amd64.exe"
-InstallDir "$LOCALAPPDATA\Programs\${APP_NAME}"
-InstallDirRegKey HKCU "${APP_REG_KEY}" "InstallDir"
-RequestExecutionLevel user
+InstallDir "$PROGRAMFILES64\${APP_NAME}"
+InstallDirRegKey HKLM "${APP_REG_KEY}" "InstallDir"
+RequestExecutionLevel admin
 SetCompressor /SOLID lzma
+
+Function .onInit
+  ; Keep HKLM lookups out of the 32-bit registry redirect on 64-bit Windows.
+  SetRegView 64
+FunctionEnd
 
 ; Version resource shown in Explorer / Add or Remove Programs.
 VIProductVersion "${APP_VERSION_NUM}"
@@ -61,16 +68,23 @@ Section "Install" SEC_INSTALL
   CreateShortCut "$SMPROGRAMS\${APP_NAME}\Uninstall.lnk" "$INSTDIR\Uninstall.exe"
   CreateShortCut "$DESKTOP\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}"
 
+  ; Let the installing user update in place without a UAC prompt on every
+  ; launch. Program Files stays per-machine; only this app folder is granted.
+  ReadEnvStr $0 USERDOMAIN
+  ReadEnvStr $1 USERNAME
+  nsExec::ExecToLog 'icacls "$INSTDIR" /grant "$0\$1:(OI)(CI)M" /T'
+
   ; Register an install location and an entry in Add/Remove Programs.
-  WriteRegStr HKCU "${APP_REG_KEY}" "InstallDir" "$INSTDIR"
-  WriteRegStr HKCU "${UNINST_KEY}" "DisplayName" "${APP_NAME}"
-  WriteRegStr HKCU "${UNINST_KEY}" "DisplayVersion" "${APP_VERSION}"
-  WriteRegStr HKCU "${UNINST_KEY}" "Publisher" "db-fly"
-  WriteRegStr HKCU "${UNINST_KEY}" "InstallLocation" "$INSTDIR"
-  WriteRegStr HKCU "${UNINST_KEY}" "UninstallString" '"$INSTDIR\Uninstall.exe"'
-  WriteRegStr HKCU "${UNINST_KEY}" "QuietUninstallString" '"$INSTDIR\Uninstall.exe" /S'
-  WriteRegDWORD HKCU "${UNINST_KEY}" "NoModify" 1
-  WriteRegDWORD HKCU "${UNINST_KEY}" "NoRepair" 1
+  SetRegView 64
+  WriteRegStr HKLM "${APP_REG_KEY}" "InstallDir" "$INSTDIR"
+  WriteRegStr HKLM "${UNINST_KEY}" "DisplayName" "${APP_NAME}"
+  WriteRegStr HKLM "${UNINST_KEY}" "DisplayVersion" "${APP_VERSION}"
+  WriteRegStr HKLM "${UNINST_KEY}" "Publisher" "db-fly"
+  WriteRegStr HKLM "${UNINST_KEY}" "InstallLocation" "$INSTDIR"
+  WriteRegStr HKLM "${UNINST_KEY}" "UninstallString" '"$INSTDIR\Uninstall.exe"'
+  WriteRegStr HKLM "${UNINST_KEY}" "QuietUninstallString" '"$INSTDIR\Uninstall.exe" /S'
+  WriteRegDWORD HKLM "${UNINST_KEY}" "NoModify" 1
+  WriteRegDWORD HKLM "${UNINST_KEY}" "NoRepair" 1
 SectionEnd
 
 ; --- Uninstall ------------------------------------------------------------
@@ -86,6 +100,7 @@ Section "Uninstall"
   RMDir "$SMPROGRAMS\${APP_NAME}"
   Delete "$DESKTOP\${APP_NAME}.lnk"
 
-  DeleteRegKey HKCU "${APP_REG_KEY}"
-  DeleteRegKey HKCU "${UNINST_KEY}"
+  SetRegView 64
+  DeleteRegKey HKLM "${APP_REG_KEY}"
+  DeleteRegKey HKLM "${UNINST_KEY}"
 SectionEnd

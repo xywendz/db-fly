@@ -302,7 +302,7 @@ db-fly/
 
 ### 2.8 本地数据
 
-默认数据目录 `~/.db-fly`，CLI 可用全局 `--data-dir` 覆盖。兼容升级：若 `~/.db-fly` 不存在而旧版 `~/.dbclient` 存在，程序会自动沿用旧目录，已有连接与凭证不会丢失：
+默认数据目录 `~/.db-fly`，CLI 可用全局 `--data-dir` 覆盖。兼容升级：若 `~/.db-fly` 不存在而旧版 `~/.dbclient` 存在，首次启动会把旧目录整体迁移到 `~/.db-fly`，已有连接与凭证不会丢失：
 
 | 文件 | 内容 | 权限 |
 | --- | --- | --- |
@@ -461,7 +461,7 @@ wails3 build
 | 场景 | 命令 | 说明 |
 | --- | --- | --- |
 | 一键打包 exe | `./build/gui.ps1` | 前端构建 → 复制资源 → 生成图标 → 纯 Go 编译 → 校验 wails3 依赖；若检测到 `makensis` 会顺带产出安装包 |
-| 生成 Windows 安装包 | `./build/installer.ps1` | 需 NSIS 3 的 `makensis`；产出 `dist/db-fly-setup-windows-amd64.exe`（per-user 安装，不动 `~/.db-fly`） |
+| 生成 Windows 安装包 | `./build/installer.ps1` | 需 NSIS 3 的 `makensis`；产出 `dist/db-fly-setup-windows-amd64.exe`（安装到 `C:\Program Files\db-fly`，不动 `~/.db-fly`） |
 | 一键打包 exe + 安装包 | `task package` | 依次执行 `build` 与 `build:installer` |
 | wails3 CLI 打包 | `wails3 build` | 需要根目录 `Taskfile.yml`；由 go-task 执行 `build` 任务，转发到 `./build/gui.ps1` |
 | 检查/干跑构建任务 | `wails3 task -list` / `wails3 task -dry build` | 确认 Taskfile 被识别 |
@@ -473,7 +473,9 @@ wails3 build
 | 仅生成 PE 资源 | `wails3 generate syso -icon build/windows/icon.ico -manifest build/windows/wails.exe.manifest -info build/windows/info.json -arch amd64 -out cmd/db-fly-gui/rsrc_windows_amd64.syso` | 纯 Go，无需 gcc |
 | 验证产物 | `go version -m dist/db-fly-gui.exe` | 应包含 `dep github.com/wailsapp/wails/v3`、`CGO_ENABLED=0` 与注入的版本号 |
 
-Windows 安装包由 `build/windows/installer.nsi` 定义，`build/installer.ps1` 调用 NSIS 编译。它采用 per-user 安装（默认 `%LOCALAPPDATA%\Programs\db-fly`，`RequestExecutionLevel user`），这样 Wails 自动更新器无需提权即可替换 exe；快捷方式指向安装目录内的 exe，更新后保持有效。安装包命名为 `db-fly-setup-windows-amd64.exe`，刻意避开 `selfupdate.matchAsset` 的 `db-fly-gui*.zip/exe` 匹配规则，因此不会被当作更新包下载。卸载只清理安装目录与快捷方式，用户配置/凭证/历史（`~/.db-fly`）保留。
+Windows 安装包由 `build/windows/installer.nsi` 定义，`build/installer.ps1` 调用 NSIS 编译。它采用 per-machine 安装（默认 `C:\Program Files\db-fly`，`RequestExecutionLevel admin`），安装器给当前用户授予该目录的 Modify 权限，使 Wails 自动更新器无需每次启动提权即可替换 exe；快捷方式指向安装目录内的 exe，更新后保持有效。安装包命名为 `db-fly-setup-windows-amd64.exe`，刻意避开 `selfupdate.matchAsset` 的 `db-fly-gui*.zip/exe` 匹配规则，因此不会被当作更新包下载。卸载只清理安装目录与快捷方式，用户配置/凭证/历史（`~/.db-fly`）保留。
+
+GUI 主窗口的 `WindowClosing` hook 会取消关闭并调用 `window.Hide()`，因此点击标题栏关闭按钮只隐藏到系统托盘；托盘图标左键显示/隐藏窗口，右键菜单提供“显示窗口 / 隐藏窗口 / 退出 db-fly”。只有托盘菜单调用 `wailsApp.Quit()` 才会真正结束进程。
 
 脚本显式设置 `CGO_ENABLED=0`、不需要 gcc，并在构建后用 `go version -m` 校验产物确实链入了 wails3 入口（而不是打印提示就退出的 stub）；不满足时删除产物并报错。
 
