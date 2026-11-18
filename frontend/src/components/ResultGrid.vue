@@ -15,8 +15,10 @@ const props = withDefaults(
     selectedRows?: number[];
     /** 待新增的空行，直接渲染在现有数据行下方就地填写。 */
     draftRows?: Record<string, string>[];
+    /** 更新/删除语句：在结果区突出展示影响行数。 */
+    mutationStatement?: boolean;
   }>(),
-  { editable: false, loading: false },
+  { editable: false, loading: false, mutationStatement: false },
 );
 
 const emit = defineEmits<{
@@ -41,6 +43,9 @@ const page = computed(() => pages.value[Math.min(activePage.value, Math.max(0, p
 const pageColumns = computed(() => page.value?.columns ?? []);
 const pageRows = computed(() => page.value?.rows ?? []);
 const pageDocs = computed(() => page.value?.json_documents ?? []);
+const hasResultRows = computed(() => pages.value.some((p) => (p.rows?.length ?? 0) > 0 || (p.json_documents?.length ?? 0) > 0));
+const showMutationPanel = computed(() => !!props.mutationStatement && !props.loading && !!props.outcome);
+const affected = computed(() => props.outcome?.summary?.affected ?? 0);
 
 function display(c: Cell): string {
   if (!c) return "";
@@ -236,7 +241,7 @@ defineExpose({ copyText, asText });
     </div>
 
     <EmptyState
-      v-else-if="!outcome || !pages.length"
+      v-else-if="!outcome || (!pages.length && !showMutationPanel)"
       icon="table"
       title="尚无查询结果"
       description="编写语句后点击「执行」，结果会显示在这里。支持多结果集分页查看。"
@@ -244,6 +249,16 @@ defineExpose({ copyText, asText });
     />
 
     <template v-else>
+      <div v-if="showMutationPanel" class="mutation-summary">
+        <Icon name="check" :size="16" />
+        <span class="mutation-title">执行成功</span>
+        <span class="divider-v"></span>
+        <span>影响 <strong class="mutation-count">{{ affected }}</strong> 行</span>
+        <span class="divider-v"></span>
+        <span>耗时 {{ outcome?.summary?.duration_ms ?? 0 }} ms</span>
+      </div>
+
+      <template v-if="hasResultRows || !showMutationPanel">
       <div v-if="showJson" class="scroll grow json-view">
         <div v-for="(doc, i) in pageDocs" :key="i" class="doc-block">
           <div v-if="editable" class="doc-head">
@@ -328,7 +343,7 @@ defineExpose({ copyText, asText });
                 />
               </td>
             </tr>
-            <tr v-if="!sortedRows.length && !(draftRows?.length)">
+            <tr v-if="!sortedRows.length && !(draftRows?.length) && !showMutationPanel">
               <td :colspan="pageColumns.length + (editable ? 2 : 1)" class="dim" style="text-align: center; padding: 24px">
                 查询成功，但没有返回数据行
               </td>
@@ -336,6 +351,8 @@ defineExpose({ copyText, asText });
           </tbody>
         </table>
       </div>
+      </template>
+      <div v-else class="mutation-hint">语句已执行，未返回结果集。</div>
 
       <div v-if="selectedCell" class="cell-detail">
         <Icon name="eye" :size="13" />
@@ -352,7 +369,8 @@ defineExpose({ copyText, asText });
       <div class="grid-foot dim">
         <span>{{ pageColumns.length }} 列 · {{ pageRows.length }} 行</span>
         <span class="divider-v"></span>
-        <span v-if="outcome?.summary">影响 {{ outcome.summary.affected }} 行 · 耗时 {{ outcome.summary.duration_ms }} ms</span>
+        <span v-if="outcome?.summary && !showMutationPanel">影响 {{ outcome.summary.affected }} 行 · 耗时 {{ outcome.summary.duration_ms }} ms</span>
+        <span v-if="showMutationPanel" class="mutation-count">影响 {{ affected }} 行 · 耗时 {{ outcome?.summary?.duration_ms ?? 0 }} ms</span>
         <span v-if="outcome?.summary?.truncated" class="badge badge-warn">结果已截断</span>
         <span class="grow"></span>
         <span v-if="editable" class="faint">双击单元格编辑 · 输入 NULL 表示空值</span>
@@ -388,6 +406,11 @@ defineExpose({ copyText, asText });
 .cell-detail { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-top: 1px solid var(--border); background: var(--surface-2); flex-shrink: 0; font-size: var(--fs-xs); }
 .grid-foot { display: flex; align-items: center; gap: 9px; padding: 6px 10px; border-top: 1px solid var(--border); font-size: var(--fs-xs); flex-shrink: 0; flex-wrap: wrap; }
 .grid-msg { padding: 4px 10px; font-size: var(--fs-xs); color: var(--text-dim); border-top: 1px solid var(--border); }
+.mutation-summary { display: flex; align-items: center; gap: 9px; flex-shrink: 0; padding: 10px 12px; color: var(--ok); background: var(--ok-soft); border-bottom: 1px solid var(--border); font-size: var(--fs-sm); }
+.mutation-summary .mutation-title { font-weight: 600; }
+.mutation-summary .divider-v { background: currentColor; opacity: .3; }
+.mutation-count { color: var(--ok); font-size: var(--fs-md); font-weight: 700; font-family: var(--mono); }
+.mutation-hint { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--text-faint); font-size: var(--fs-xs); }
 .json-view { padding: 10px; }
 .doc-block { margin-bottom: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
 .doc-block .doc-head { display: flex; align-items: center; gap: 8px; padding: 5px 8px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
