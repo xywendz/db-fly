@@ -51,9 +51,9 @@ jobs:
           path: dist/db-fly-server
           if-no-files-found: error
 
-  # ---------- 桌面 GUI：Windows exe（wails3 v3 纯 Go，需 wails3 CLI 生成图标）----------
+  # ---------- 桌面 GUI：Windows exe + NSIS 安装包（wails3 v3 纯 Go）----------
   gui:
-    name: GUI (windows/amd64)
+    name: GUI + installer (windows/amd64)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -70,14 +70,34 @@ jobs:
       - name: Install wails3 CLI
         run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
         shell: bash
-      - name: Build GUI
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
+            choco install nsis -y --no-progress
+          }
+          $nsisDir = 'C:\Program Files (x86)\NSIS'
+          if (Test-Path $nsisDir) {
+            "$nsisDir" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+            $env:PATH += ";$nsisDir"
+          }
+          makensis /VERSION
+      - name: Build GUI and installer
         shell: pwsh
         run: |
           ./build/gui.ps1
+      - name: Verify installer
+        shell: pwsh
+        run: |
+          if (-not (Test-Path dist/db-fly-setup-windows-amd64.exe)) {
+            throw "Windows installer was not built"
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: db-fly-gui-windows-amd64
-          path: dist/db-fly-gui.exe
+          path: |
+            dist/db-fly-gui.exe
+            dist/db-fly-setup-windows-amd64.exe
           if-no-files-found: error
 
   # ---------- 标签发布：为每个平台只发布一份归档 ----------
@@ -104,6 +124,8 @@ jobs:
           fi
 
           # Wails updater unpacks .zip; a bare .gz cannot be swapped into place.
+          # db-fly-setup-windows-amd64.exe is published as-is for first-time
+          # installation; matchAsset never picks it up as an update package.
           if [ -f db-fly-gui.exe ]; then
             zip -j db-fly-gui-windows-amd64.zip db-fly-gui.exe
             rm -f db-fly-gui.exe

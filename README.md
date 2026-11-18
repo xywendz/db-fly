@@ -39,7 +39,9 @@
 
 ### 桌面 GUI（Windows）
 
-构建或获取 `db-fly-gui.exe`，双击启动。需要 **WebView2 Runtime**（Windows 11 自带；Windows 10 需安装「Microsoft Edge WebView2 Runtime」）。新建连接 → 选择数据库类型 → 填写主机 / 端口 / 账号 → 连接后即可浏览对象、执行查询、编辑数据。
+推荐下载 `db-fly-setup-windows-amd64.exe` 安装程序（无需管理员权限，默认安装到 `%LOCALAPPDATA%\Programs\db-fly`，自动创建开始菜单和桌面快捷方式）；也可以获取 `db-fly-gui.exe` 绿色版直接双击启动。需要 **WebView2 Runtime**（Windows 11 自带；Windows 10 需安装「Microsoft Edge WebView2 Runtime」）。新建连接 → 选择数据库类型 → 填写主机 / 端口 / 账号 → 连接后即可浏览对象、执行查询、编辑数据。
+
+配置和连接数据保存在 `~/.db-fly`，卸载安装包不会删除这些数据。
 
 ### Web 服务（Docker）
 
@@ -121,15 +123,16 @@ CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o dist/dbctl ./cmd/dbctl
 仓库根目录的 `.github/workflows/build.yml` 会在 `push`（main/master）、PR 与标签时自动构建：
 
 - **Web 服务端**：`linux/amd64` 单文件二进制（前端内嵌）。
-- **桌面 GUI**：`windows/amd64` 的 `db-fly-gui.exe`（自动安装 `wails3` CLI 生成图标）。
+- **桌面 GUI**：`windows/amd64` 的 `db-fly-gui.exe` 与 NSIS 安装包 `db-fly-setup-windows-amd64.exe`（自动安装 `wails3` CLI 和 NSIS）。
 
-推送形如 `v1.0.0` 的标签时，工作流会为每个平台只发布一份归档，避免原始文件与压缩文件重复：
+推送形如 `v1.0.0` 的标签时发布：
 
 - `db-fly-server-linux-amd64.tar.gz`
 - `db-fly-gui-windows-amd64.zip`（供桌面端自动更新器使用）
+- `db-fly-setup-windows-amd64.exe`（首次安装用，不参与自动更新）
 - `checksums.txt`
 
-本地等价命令见上。
+本地生成安装包：先 `./build/gui.ps1`，再 `./build/installer.ps1`（或 `task package`）；需要 NSIS 3 的 `makensis` 在 PATH 中。
 
 > CI 中 Web/CLI 版本号由 `git describe --tags --always` 注入；本地构建可传 `VERSION`、`GOOS_TARGET` / `GOARCH_TARGET` / `OUTPUT` 等环境变量覆盖。
 
@@ -257,5 +260,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ./build/verify.ps1
 
 ## github 发布
 git push origin <提交分支>
+
 git tag v1.0.0
+
 git push origin v1.0.0

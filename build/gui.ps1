@@ -107,3 +107,16 @@ if ($env:DB_FLY_NO_UPX -ne '1') {
 $sizeMB = [math]::Round((Get-Item $bin).Length / 1MB, 1)
 Write-Host "Built dist/db-fly-gui.exe ($sizeMB MB, pure Go / CGO_ENABLED=0, version $version, icon from logo.png)"
 if ($tags) { Write-Host "Linked database providers: $tags" } else { Write-Host "Linked database providers: all (set DB_FLY_TAGS for a slim build)" }
+
+# ---- 8. Optional Windows installer (NSIS) ----
+# The zip published by CI is what the Wails updater consumes; the installer is
+# for first-time setup. Set DB_FLY_NO_INSTALLER=1 to skip locally.
+if ($env:DB_FLY_NO_INSTALLER -ne '1') {
+    if (Get-Command makensis -ErrorAction SilentlyContinue) {
+        Write-Host "==> Building Windows installer (NSIS)"
+        & (Join-Path $PSScriptRoot "installer.ps1")
+    }
+    else {
+        Write-Host "==> makensis not found; skipping installer (CI installs NSIS). Set DB_FLY_NO_INSTALLER=1 to silence."
+    }
+}

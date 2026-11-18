@@ -43,10 +43,16 @@ tasks:
       - task: build
       - task: build:web
 
+  build:installer:
+    desc: Build dist/db-fly-setup-windows-amd64.exe from the built exe (requires NSIS)
+    cmds:
+      - powershell -NoProfile -ExecutionPolicy Bypass -File ./build/installer.ps1
+
   package:
-    desc: Alias of build; this project ships a single exe, not an installer
+    desc: Build the GUI exe and the Windows installer (NSIS)
     cmds:
       - task: build
+      - task: build:installer
 
   verify:
     desc: Run gofmt / go build / vet / test / vue-tsc / vite build (no gcc needed)

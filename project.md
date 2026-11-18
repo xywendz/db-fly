@@ -452,7 +452,7 @@ wails3 build
 
 > **为什么原先报 `ERROR task: No Taskfile found at "D:\doit\db-fly"`**：Wails v3 的 `build` / `package` / `sign` 不是直接调 `go build`，而是在内部转成 `wails3 task build GOOS=windows ARCH=amd64`，由根目录的 `Taskfile.yml`（go-task）驱动。项目原先没有这个文件，CLI 在仓库根目录找不到任务定义就直接退出。
 > 本项目没有套用 `wails3 init` 生成的那套 Taskfile（它假定 `frontend/bindings`、`build/appicon.png`、输出到 `bin/`），而是让根 `Taskfile.yml` 的 `build` 任务直接调用 `./build/gui.ps1`，因此两种入口的产出完全一致：前端资源、`logo.png` → `.ico` → `.syso` 图标链路、`-H windowsgui`、版本注入与 wails3 依赖自检。
-> `Taskfile.yml` 还定义了 `default`（= `build`）、`package`（= `build`，本项目不生成安装包）、`verify`（= `./build/verify.ps1`）；用 `wails3 task -list`、`wails3 task -dry build` 可检查配置是否生效。
+> `Taskfile.yml` 还定义了 `default`（= `build`）、`build:installer`（调用 `./build/installer.ps1`，需 NSIS）、`package`（= `build` + `build:installer`）、`verify`（= `./build/verify.ps1`）；用 `wails3 task -list`、`wails3 task -dry build` 可检查配置是否生效。
 > `wails3 build -tags ...` / `-obfuscated` 会以 `EXTRA_TAGS` / `OBFUSCATED` 变量传给任务，但本项目编译参数统一由 `build/gui.ps1` 管理，这些变量当前不生效；要调整参数请改脚本。
 > 本机没有 mingw-w64 gcc 也能构建：入口原先的 `//go:build windows && cgo` 是多余约束，已改为 `//go:build windows`，`CGO_ENABLED=0` 下同样编译出真实 GUI 程序（见 §3.1.1）。
 
@@ -460,7 +460,9 @@ wails3 build
 
 | 场景 | 命令 | 说明 |
 | --- | --- | --- |
-| 一键打包 exe | `./build/gui.ps1` | 前端构建 → 复制资源 → 生成图标 → 纯 Go 编译 → 校验 wails3 依赖 |
+| 一键打包 exe | `./build/gui.ps1` | 前端构建 → 复制资源 → 生成图标 → 纯 Go 编译 → 校验 wails3 依赖；若检测到 `makensis` 会顺带产出安装包 |
+| 生成 Windows 安装包 | `./build/installer.ps1` | 需 NSIS 3 的 `makensis`；产出 `dist/db-fly-setup-windows-amd64.exe`（per-user 安装，不动 `~/.db-fly`） |
+| 一键打包 exe + 安装包 | `task package` | 依次执行 `build` 与 `build:installer` |
 | wails3 CLI 打包 | `wails3 build` | 需要根目录 `Taskfile.yml`；由 go-task 执行 `build` 任务，转发到 `./build/gui.ps1` |
 | 检查/干跑构建任务 | `wails3 task -list` / `wails3 task -dry build` | 确认 Taskfile 被识别 |
 | 仅环境/代码校验 | `./build/verify.ps1` | gofmt / go build / vet / test / vue-tsc / vite build |
@@ -470,6 +472,8 @@ wails3 build
 | 仅生成图标 | `wails3 generate icons -input logo.png -windowsfilename build/windows/icon.ico -macfilename "$env:TEMP\db-fly-icon.icns"` | 换 logo 后执行 |
 | 仅生成 PE 资源 | `wails3 generate syso -icon build/windows/icon.ico -manifest build/windows/wails.exe.manifest -info build/windows/info.json -arch amd64 -out cmd/db-fly-gui/rsrc_windows_amd64.syso` | 纯 Go，无需 gcc |
 | 验证产物 | `go version -m dist/db-fly-gui.exe` | 应包含 `dep github.com/wailsapp/wails/v3`、`CGO_ENABLED=0` 与注入的版本号 |
+
+Windows 安装包由 `build/windows/installer.nsi` 定义，`build/installer.ps1` 调用 NSIS 编译。它采用 per-user 安装（默认 `%LOCALAPPDATA%\Programs\db-fly`，`RequestExecutionLevel user`），这样 Wails 自动更新器无需提权即可替换 exe；快捷方式指向安装目录内的 exe，更新后保持有效。安装包命名为 `db-fly-setup-windows-amd64.exe`，刻意避开 `selfupdate.matchAsset` 的 `db-fly-gui*.zip/exe` 匹配规则，因此不会被当作更新包下载。卸载只清理安装目录与快捷方式，用户配置/凭证/历史（`~/.db-fly`）保留。
 
 脚本显式设置 `CGO_ENABLED=0`、不需要 gcc，并在构建后用 `go version -m` 校验产物确实链入了 wails3 入口（而不是打印提示就退出的 stub）；不满足时删除产物并报错。
 
@@ -646,8 +650,8 @@ dbctl info
 | Job | 平台 / 产物 | 说明 |
 | --- | --- | --- |
 | `web-server` | `linux/amd64` 的 `db-fly-server` | 先 `npm run build:web` 再内嵌 Go 链接 |
-| `gui` | `windows/amd64` 的 `db-fly-gui.exe` | `windows-latest` 自动 `go install wails3` 后执行 `build/gui.ps1` |
-| `release` | 仅 `v*` 标签触发 | 每个平台只上传一份归档：`db-fly-server-linux-amd64.tar.gz`、`db-fly-gui-windows-amd64.zip`，并附 `checksums.txt` |
+| `gui` | `windows/amd64` 的 `db-fly-gui.exe` + `db-fly-setup-windows-amd64.exe` | `windows-latest` 安装 `wails3` 与 NSIS 后执行 `build/gui.ps1`，自动产出安装包 |
+| `release` | 仅 `v*` 标签触发 | 发布 `db-fly-server-linux-amd64.tar.gz`、`db-fly-gui-windows-amd64.zip`（供更新器）、`db-fly-setup-windows-amd64.exe`（首次安装），并附 `checksums.txt` |
 
 本地复现等价的 Web 构建：`bash build/web.sh`（Linux）或 `./build/web.ps1`（Windows）。CLI 与 GUI 的本地命令见 §3.3 / §3.4。
 
