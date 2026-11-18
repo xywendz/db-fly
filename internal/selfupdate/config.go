@@ -21,7 +21,10 @@ const (
 	// CheckEvent is emitted by the frontend to trigger a manual update check.
 	CheckEvent = "db-fly:check-updates"
 
-	repository    = "db-fly/db-fly"
+	// Keep in sync with the git remote (`git remote get-url origin`). The
+	// GitHub provider treats a 404 from /releases/latest as "up to date", so a
+	// wrong owner silently disables every update check.
+	repository    = "xywendz/db-fly"
 	checksumAsset = "checksums.txt"
 
 	checkInterval = 6 * time.Hour
