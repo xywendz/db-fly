@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useWorkspace } from "@/stores/workspace";
 import * as api from "@/api/client";
 import type { ColumnSpec, ConnectionConfig, ObjectInfo, Script } from "@/types/domain";
@@ -22,6 +22,66 @@ const loadingConns = ref<Record<string, boolean>>({});
 const selectedKey = ref("");
 
 const q = computed(() => store.treeQuery.trim().toLowerCase());
+
+// 数据库节点右侧的「表名过滤」：每个库独立一个模糊过滤词，
+// 与顶部全局搜索叠加生效，仅过滤该库下的对象（表 / 集合 / 索引）。
+const dbFilters = ref<Record<string, string>>({});
+const activeFilterKey = ref("");
+function filterKey(conn: string, db: string) { return `${conn}|${db}`; }
+function dbFilter(conn: string, db: string) { return (dbFilters.value[filterKey(conn, db)] || "").trim(); }
+function hasDbFilter(conn: string, db: string) { return !!dbFilter(conn, db); }
+function objectLabel(conn: string) {
+  const k = connKind(conn);
+  if (k === "mongodb") return "集合";
+  if (k === "elasticsearch") return "索引";
+  return "表";
+}
+const filterInputs: Record<string, HTMLInputElement> = {};
+function bindFilterInput(key: string, el: unknown) {
+  if (el) filterInputs[key] = el as HTMLInputElement;
+  else delete filterInputs[key];
+}
+
+/** 模糊匹配：忽略大小写；空格分隔的多个关键词按 AND 组合；连续子串或顺序子序列均命中。 */
+function fuzzyMatch(name: string, pattern: string): boolean {
+  const n = name.toLowerCase();
+  return pattern
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+    .every((term) => {
+      if (n.includes(term)) return true;
+      let i = 0;
+      for (const ch of n) {
+        if (ch === term[i]) i += 1;
+        if (i === term.length) return true;
+      }
+      return false;
+    });
+}
+
+async function toggleDbFilter(conn: string, db: string) {
+  const key = filterKey(conn, db);
+  if (activeFilterKey.value === key) {
+    activeFilterKey.value = "";
+    dbFilters.value[key] = "";
+    return;
+  }
+  activeFilterKey.value = key;
+  expandedDbs.value[key] = true;
+  // Redis 的键不在树中加载，仅关系型 / 文档型 / ES 需要补齐对象缓存。
+  if (connKind(conn) !== "redis" && !(store.objectsCache[store.cacheKey(conn, db)] || []).length) {
+    try { await store.loadObjects(conn, db); } catch { /* 单库不可用不阻断过滤输入 */ }
+  }
+  await nextTick();
+  filterInputs[key]?.focus();
+}
+function setDbFilter(conn: string, db: string, value: string) {
+  dbFilters.value[filterKey(conn, db)] = value;
+}
+function clearDbFilter(conn: string, db: string) {
+  dbFilters.value[filterKey(conn, db)] = "";
+}
 
 onMounted(() => {
   store.loadConnections().catch((e: any) => store.setStatus(e?.message ?? "加载连接失败", "error"));
@@ -60,8 +120,9 @@ function connOpen(name: string) {
   return q.value ? true : !!expandedConns.value[name];
 }
 function dbOpen(conn: string, db: string) {
-  if (!q.value) return !!expandedDbs.value[`${conn}|${db}`];
-  return !!store.objectsCache[store.cacheKey(conn, db)];
+  const filtered = hasDbFilter(conn, db) || activeFilterKey.value === filterKey(conn, db);
+  if (!q.value) return filtered || !!expandedDbs.value[`${conn}|${db}`];
+  return filtered || !!store.objectsCache[store.cacheKey(conn, db)];
 }
 function visibleConns() {
   if (!q.value) return store.connections;
@@ -87,8 +148,31 @@ function hasMatchingObject(conn: string, db: string) {
 }
 function visibleObjs(conn: string, db: string): ObjectInfo[] {
   const objs = store.objectsCache[store.cacheKey(conn, db)] || [];
-  if (!q.value) return objs;
-  return objs.filter((o) => o.name.toLowerCase().includes(q.value));
+  let list = q.value ? objs.filter((o) => o.name.toLowerCase().includes(q.value)) : objs;
+  const filter = dbFilter(conn, db);
+  if (filter) list = list.filter((o) => fuzzyMatch(o.name, filter));
+  return list;
+}
+
+/** 数据库节点显示的对象数量；缓存未加载时返回 null。 */
+function objectCount(conn: string, db: string): number | null {
+  const cached = store.objectsCache[store.cacheKey(conn, db)];
+  return cached ? cached.length : null;
+}
+
+/** 展开连接后后台补齐各库对象数量；限制库数与并发，避免元数据风暴。 */
+async function preloadObjectCounts(conn: string) {
+  if (connKind(conn) === "redis") return;
+  const targets = (store.dbCache[conn] || [])
+    .filter((d) => !d.system)
+    .filter((d) => {
+      const key = store.cacheKey(conn, d.name);
+      return !store.objectsCache[key] && !store.objectsLoading[key];
+    })
+    .slice(0, 40);
+  for (let i = 0; i < targets.length; i += 4) {
+    await Promise.all(targets.slice(i, i + 4).map((d) => store.loadObjects(conn, d.name).catch(() => {})));
+  }
 }
 
 async function toggleConn(c: ConnectionConfig) {
@@ -101,6 +185,7 @@ async function toggleConn(c: ConnectionConfig) {
   loadingConns.value[c.name] = true;
   try {
     await store.loadDatabases(c.name);
+    void preloadObjectCounts(c.name);
   } catch (e: any) {
     store.setStatus(e?.message ?? "加载数据库失败", "error");
   } finally {
@@ -152,6 +237,7 @@ async function refreshConn(name: string) {
   }
   try {
     await store.loadDatabases(name);
+    void preloadObjectCounts(name);
     store.setStatus(`已刷新 ${name}`, "ok");
   } catch (e: any) {
     store.setStatus(e?.message ?? "刷新失败", "error");
@@ -823,7 +909,22 @@ function objIcon(o: ObjectInfo) {
               <span class="caret">{{ dbOpen(c.name, db.name) ? "▾" : "▸" }}</span>
               <Icon name="folder" :size="14" style="color: var(--warn)" />
               <span class="label" :title="db.name">{{ db.name }}</span>
+              <span
+                v-if="objectCount(c.name, db.name) !== null && connKind(c.name) !== 'redis'"
+                class="count-badge"
+                :title="`共 ${objectCount(c.name, db.name)} 个${objectLabel(c.name)}`"
+              >{{ objectCount(c.name, db.name) }}</span>
               <span class="node-actions">
+                <button
+                  v-if="connKind(c.name) !== 'redis'"
+                  class="btn-icon"
+                  :class="{ active: hasDbFilter(c.name, db.name) || activeFilterKey === filterKey(c.name, db.name) }"
+                  style="width: 20px; height: 20px"
+                  :title="`过滤${objectLabel(c.name)}名（模糊搜索）`"
+                  @click.stop="toggleDbFilter(c.name, db.name)"
+                >
+                  <Icon name="filter" :size="12" />
+                </button>
                 <button class="btn-icon" style="width: 20px; height: 20px" :title="connKind(c.name) === 'redis' ? '新建 key' : connKind(c.name) === 'mongodb' ? '新建集合' : connKind(c.name) === 'elasticsearch' ? '新建索引' : '新建表'" @click.stop="connKind(c.name) === 'redis' ? store.openRedisKeyTab(c.name, db.name, '') : connKind(c.name) === 'mongodb' ? store.openMongoCollectionTab(c.name, db.name, '') : connKind(c.name) === 'elasticsearch' ? store.openESIndexTab(c.name, db.name, '') : store.openDesignerTab(c.name, db.name)">
                   <Icon name="plus" :size="13" />
                 </button>
@@ -831,6 +932,26 @@ function objIcon(o: ObjectInfo) {
                   <Icon name="more" :size="13" />
                 </button>
               </span>
+            </div>
+            <div
+              v-if="activeFilterKey === filterKey(c.name, db.name) || hasDbFilter(c.name, db.name)"
+              class="tree-db-filter"
+            >
+              <Icon name="search" :size="12" />
+              <input
+                :ref="(el) => bindFilterInput(filterKey(c.name, db.name), el)"
+                :value="dbFilter(c.name, db.name)"
+                :placeholder="`过滤${objectLabel(c.name)}名（模糊搜索）`"
+                @input="setDbFilter(c.name, db.name, ($event.target as HTMLInputElement).value)"
+                @keydown.esc.stop="clearDbFilter(c.name, db.name)"
+                @click.stop
+              />
+              <span v-if="hasDbFilter(c.name, db.name)" class="faint count">
+                {{ visibleObjs(c.name, db.name).length }}/{{ (store.objectsCache[store.cacheKey(c.name, db.name)] || []).length }}
+              </span>
+              <button class="btn btn-icon" style="width: 18px; height: 18px" title="清除过滤" @click.stop="clearDbFilter(c.name, db.name)">
+                <Icon name="close" :size="11" />
+              </button>
             </div>
             <div v-if="dbOpen(c.name, db.name)" class="tree-children">
               <div v-if="store.objectsLoading[store.cacheKey(c.name, db.name)]" class="loading-line" style="padding: 4px 8px">

@@ -38,9 +38,21 @@ export class DbError extends Error {
   }
 }
 
-async function call<T>(p: Promise<T>): Promise<T> {
+// 会话变更钩子：后端的大部分业务调用都会懒建立/复用数据库连接会话，
+// 但 openConns 原本只在连接树展开/刷新时拉取，导致执行查询、浏览数据后
+// 资源管理器绿点不更新。由 workspace store 注册节流刷新函数；这里用回调
+// 注册而非直接 import store，避免 api ↔ store 循环依赖。
+let sessionTouchHook: (() => void) | null = null;
+export function setSessionTouchHook(fn: (() => void) | null) {
+  sessionTouchHook = fn;
+}
+
+// touchSession=false 用于不建立会话的调用（含 openConnections 自身，避免递归）。
+async function call<T>(p: Promise<T>, touchSession = true): Promise<T> {
   try {
-    return await p;
+    const result = await p;
+    if (touchSession) sessionTouchHook?.();
+    return result;
   } catch (e: any) {
     const msg = e?.message ?? String(e);
     const code = e?.code;
@@ -66,7 +78,7 @@ function normalizeOutcome(res: QueryOutcome | null | undefined): QueryOutcome {
 }
 
 // ===== 连接管理 =====
-export const listConnections = () => call<ConnectionConfig[]>(raw.ListConnections());
+export const listConnections = () => call<ConnectionConfig[]>(raw.ListConnections(), false);
 export const saveConnection = (
   c: ConnectionConfig,
   password: string,
@@ -74,14 +86,14 @@ export const saveConnection = (
 ) => call<ConnectionConfig>(raw.SaveConnection(c, password, replacePassword));
 export const removeConnection = (id: string) => call<boolean>(raw.RemoveConnection(id));
 export const closeConnection = (conn: string) => call<void>(raw.CloseConnection(conn));
-export const openConnections = () => call<string[]>(raw.OpenConnections());
+export const openConnections = () => call<string[]>(raw.OpenConnections(), false);
 export const testConnection = (c: ConnectionConfig, password: string) =>
-  call<ServerInfo>(raw.TestConnection(c, password));
-export const testSavedConnection = (id: string) => call<ServerInfo>(raw.TestSavedConnection(id));
-export const listKinds = () => call<KindInfo[]>(raw.ListKinds());
+  call<ServerInfo>(raw.TestConnection(c, password), false);
+export const testSavedConnection = (id: string) => call<ServerInfo>(raw.TestSavedConnection(id), false);
+export const listKinds = () => call<KindInfo[]>(raw.ListKinds(), false);
 export const kindCapabilities = (kind: Kind) =>
-  call<Capability[]>(raw.KindCapabilities(kind));
-export const validateConnection = (c: ConnectionConfig) => call<boolean>(raw.ValidateConnection(c));
+  call<Capability[]>(raw.KindCapabilities(kind), false);
+export const validateConnection = (c: ConnectionConfig) => call<boolean>(raw.ValidateConnection(c), false);
 
 // ===== 元数据浏览 =====
 export const serverInfo = (conn: string) => call<ServerInfo>(raw.ServerInfo(conn));
@@ -140,12 +152,12 @@ export const exportDatabase = (conn: string, db: string, structure: boolean, dat
   call<string>(raw.ExportDatabase(conn, db, structure, data, maxRows));
 
 // ===== 历史 / 收藏 / 信息 =====
-export const info = () => call<AppInfo>(raw.Info());
+export const info = () => call<AppInfo>(raw.Info(), false);
 
-export const listHistory = (limit = 0) => call<any[]>(raw.ListHistory(limit));
-export const clearHistory = () => call<boolean>(raw.ClearHistory());
-export const listSavedQueries = () => call<any[]>(raw.ListSavedQueries());
-export const saveSavedQuery = (q: any) => call<any>(raw.SaveSavedQuery(q));
-export const deleteSavedQuery = (id: string) => call<boolean>(raw.DeleteSavedQuery(id));
-export const listPreferences = () => call<any>(raw.ListPreferences());
-export const savePreferences = (p: any) => call<boolean>(raw.SavePreferences(p));
+export const listHistory = (limit = 0) => call<any[]>(raw.ListHistory(limit), false);
+export const clearHistory = () => call<boolean>(raw.ClearHistory(), false);
+export const listSavedQueries = () => call<any[]>(raw.ListSavedQueries(), false);
+export const saveSavedQuery = (q: any) => call<any>(raw.SaveSavedQuery(q), false);
+export const deleteSavedQuery = (id: string) => call<boolean>(raw.DeleteSavedQuery(id), false);
+export const listPreferences = () => call<any>(raw.ListPreferences(), false);
+export const savePreferences = (p: any) => call<boolean>(raw.SavePreferences(p), false);

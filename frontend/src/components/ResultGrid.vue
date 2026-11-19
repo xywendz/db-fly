@@ -128,6 +128,22 @@ function isSelected(ri: number) {
   return (props.selectedRows ?? []).includes(ri);
 }
 
+// 表头全选：仅作用于当前结果页，保留其他页已选行。
+const pageRowIndices = computed(() => pageRows.value.map((_, ri) => ri));
+const allPageRowsSelected = computed(
+  () => pageRowIndices.value.length > 0 && pageRowIndices.value.every((ri) => isSelected(ri)),
+);
+const somePageRowsSelected = computed(() => pageRowIndices.value.some((ri) => isSelected(ri)));
+
+function toggleSelectAll() {
+  const current = props.selectedRows ?? [];
+  const indices = pageRowIndices.value;
+  const next = allPageRowsSelected.value
+    ? current.filter((ri) => !indices.includes(ri))
+    : [...new Set([...current, ...indices])].sort((a, b) => a - b);
+  emit("rowselection", next);
+}
+
 function toggleRow(ri: number) {
   const current = props.selectedRows ?? [];
   emit("rowselection", current.includes(ri) ? current.filter((x) => x !== ri) : [...current, ri]);
@@ -278,7 +294,14 @@ defineExpose({ copyText, asText });
         <table class="data-table">
           <thead>
             <tr>
-              <th v-if="editable" style="width: 38px; text-align: center">选</th>
+              <th v-if="editable" style="width: 38px; text-align: center" :title="allPageRowsSelected ? '取消全选' : '全选本页'">
+                <input
+                  type="checkbox"
+                  :checked="allPageRowsSelected"
+                  :indeterminate="somePageRowsSelected && !allPageRowsSelected"
+                  @change="toggleSelectAll"
+                />
+              </th>
               <th class="rownum">#</th>
               <th
                 v-for="(col, ci) in pageColumns"

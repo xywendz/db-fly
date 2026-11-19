@@ -245,6 +245,17 @@ export const useWorkspace = defineStore("workspace", () => {
     }
   }
 
+  // 后端在查询 / 浏览 / 导入导出等调用中懒建立会话；api 层在这些调用成功后
+  // 触发此钩子。节流合并同一批调用，避免频繁拉取，同时保证资源管理器绿点及时更新。
+  let openConnsRefreshTimer: number | undefined;
+  api.setSessionTouchHook(() => {
+    if (openConnsRefreshTimer !== undefined) return;
+    openConnsRefreshTimer = window.setTimeout(() => {
+      openConnsRefreshTimer = undefined;
+      void loadOpenConns();
+    }, 250);
+  });
+
   function hasCap(conn: string, cap: Capability): boolean {
     return (capabilities.value[conn] ?? []).includes(cap);
   }
