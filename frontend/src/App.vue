@@ -34,8 +34,13 @@ const store = useWorkspace();
 
 const connDialog = ref<{ open: boolean; editing: ConnectionConfig | null }>({ open: false, editing: null });
 const settingsOpen = ref(false);
+// 对话框开关与内容解耦：about 只承载加载失败时的提示文本，
+// 点击「检查更新」不再清空内容导致弹窗关闭。
+const aboutOpen = ref(false);
 const about = ref("");
 const aboutInfo = ref<AppInfo | null>(null);
+const checkingUpdate = ref(false);
+const updateStatus = ref("");
 const tabMenu = ref({ open: false, x: 0, y: 0, items: [] as MenuItem[] });
 const dragging = ref<"left" | "right" | null>(null);
 
@@ -80,23 +85,30 @@ function newQuery() {
 }
 
 async function showAbout() {
+  aboutOpen.value = true;
+  updateStatus.value = "";
+  about.value = "";
+  aboutInfo.value = null;
   try {
     const i = await api.info();
-    about.value = i.version;
     aboutInfo.value = i;
   } catch {
     about.value = "无法获取运行时信息";
-    aboutInfo.value = null;
   }
 }
 
 async function requestUpdateCheck() {
-  about.value = "";
+  checkingUpdate.value = true;
+  updateStatus.value = "正在请求更新检查…";
   try {
     await checkForUpdates();
-    store.notify("已开始检查更新");
+    updateStatus.value = runtimeMode === "gui"
+      ? "已向更新器发起检查，请在弹出的更新窗口查看结果。"
+      : "当前为 Web 模式，请在服务端执行更新。";
   } catch (e: any) {
-    store.notify(`检查更新失败：${e?.message ?? e}`, "error");
+    updateStatus.value = `检查更新失败：${e?.message ?? e}`;
+  } finally {
+    checkingUpdate.value = false;
   }
 }
 
@@ -318,36 +330,60 @@ onUnmounted(() => {
       @close="settingsOpen = false"
       @saved="store.setStatus('设置已保存', 'ok')"
     />
-    <Modal :open="!!about" title="关于 db-fly" width="440px" @close="about = ''">
-      <div class="col" style="gap: 14px">
-        <div class="row" style="gap: 14px">
-          <img src="/logo.png" alt="db-fly" style="width: 56px; height: 56px; border-radius: 14px" />
-          <div>
-            <h3 style="font-size: 16px">db-fly</h3>
-            <p class="dim" style="font-size: 12px">模块化、多数据库、跨平台的数据库客户端</p>
+    <Modal :open="aboutOpen" title="关于 db-fly" width="460px" @close="aboutOpen = false">
+      <div class="about-dialog">
+        <div class="about-hero">
+          <img src="/logo.png" alt="db-fly" class="about-logo" />
+          <div class="about-title">
+            <h2>db-fly</h2>
+            <p>模块化、多数据库、跨平台的数据库客户端</p>
             <span class="badge badge-accent">{{ runtimeMode === "web" ? "Web + Vue 3" : "wails3 + Vue 3" }}</span>
           </div>
         </div>
-        <div class="divider-h"></div>
-        <template v-if="aboutInfo">
-          <div class="row between"><span class="dim">版本</span><span class="mono">{{ aboutInfo.version }}</span></div>
-          <div class="row between"><span class="dim">数据目录</span><span class="mono truncate" style="max-width: 280px" :title="aboutInfo.data_dir">{{ aboutInfo.data_dir }}</span></div>
-          <div class="row between"><span class="dim">凭证实现</span><span>{{ aboutInfo.secrets_name }}</span></div>
-          <div class="col" style="gap: 5px">
-            <span class="dim">已注册数据库类型</span>
-            <div class="row wrap" style="gap: 5px">
-              <span v-for="k in aboutInfo.kinds" :key="k" class="badge">{{ k }}</span>
+
+        <div class="about-section">
+          <div class="about-section-title">运行信息</div>
+          <template v-if="aboutInfo">
+            <div class="about-info-row">
+              <span class="about-label">当前版本</span>
+              <span class="about-value mono">{{ aboutInfo.version }}</span>
             </div>
+            <div class="about-info-row">
+              <span class="about-label">数据目录</span>
+              <span class="about-value mono about-path" :title="aboutInfo.data_dir">{{ aboutInfo.data_dir }}</span>
+            </div>
+            <div class="about-info-row">
+              <span class="about-label">凭证实现</span>
+              <span class="about-value">{{ aboutInfo.secrets_name }}</span>
+            </div>
+            <div class="about-info-row">
+              <span class="about-label">已注册类型</span>
+              <div class="about-kinds">
+                <span v-for="k in aboutInfo.kinds" :key="k" class="badge">{{ k }}</span>
+              </div>
+            </div>
+          </template>
+          <p v-else class="dim" style="font-size: 12px; margin: 0">{{ about || "正在读取运行信息…" }}</p>
+        </div>
+
+        <div v-if="runtimeMode === 'gui'" class="about-section about-update">
+          <div class="about-update-title">
+            <Icon name="download" :size="15" /> 软件更新
           </div>
-        </template>
-        <p v-else class="dim">{{ about }}</p>
+          <div class="about-update-row">
+            <span class="about-value mono">{{ aboutInfo?.version || "—" }}</span>
+            <button class="btn btn-primary" :disabled="checkingUpdate" @click="requestUpdateCheck">
+              <Icon name="refresh" :size="13" /> {{ checkingUpdate ? "检查中…" : "检查更新" }}
+            </button>
+          </div>
+          <p class="about-update-status" :class="{ 'about-update-error': updateStatus.startsWith('检查更新失败') }">
+            {{ updateStatus || "从 GitHub Release 检查是否有新版本" }}
+          </p>
+        </div>
       </div>
       <template #footer>
         <span class="grow"></span>
-        <button v-if="runtimeMode === 'gui'" class="btn" title="从 GitHub Release 检查新版本" @click="requestUpdateCheck">
-          <Icon name="download" :size="14" /> 检查更新
-        </button>
-        <button class="btn btn-primary" @click="about = ''">关闭</button>
+        <button class="btn btn-primary" @click="aboutOpen = false">关闭</button>
       </template>
     </Modal>
   </div>
@@ -380,4 +416,29 @@ onUnmounted(() => {
 .content { min-height: 0; display: flex; width: 100%; overflow: hidden; }
 .content > * { flex: 1; min-width: 0; min-height: 0; max-width: 100%; }
 .right { flex-shrink: 0; min-width: 0; overflow: hidden; border-left: 1px solid var(--border); background: var(--surface); }
+
+/* ---- 关于 / 检查更新对话框 ---- */
+.about-dialog { display: flex; flex-direction: column; gap: 14px; }
+.about-hero { display: flex; align-items: center; gap: 14px; }
+.about-logo { width: 56px; height: 56px; border-radius: 14px; box-shadow: var(--shadow); flex-shrink: 0; }
+.about-title h2 { font-size: 17px; line-height: 1.2; }
+.about-title p { font-size: var(--fs-xs); color: var(--text-dim); margin: 3px 0 7px; }
+.about-section {
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface-2); padding: 10px 12px;
+}
+.about-section-title { font-size: var(--fs-xs); font-weight: 600; color: var(--text-dim); margin-bottom: 6px; }
+.about-info-row { display: flex; align-items: flex-start; gap: 10px; padding: 5px 0; }
+.about-info-row + .about-info-row { border-top: 1px dashed var(--border); }
+.about-label { width: 72px; flex-shrink: 0; font-size: var(--fs-xs); color: var(--text-dim); }
+.about-value { flex: 1; min-width: 0; font-size: var(--fs-xs); word-break: break-all; }
+.about-path { max-height: 32px; overflow: auto; }
+.about-kinds { display: flex; flex-wrap: wrap; gap: 5px; flex: 1; min-width: 0; }
+.about-update-title {
+  display: flex; align-items: center; gap: 6px;
+  font-size: var(--fs-xs); font-weight: 600; color: var(--text-dim); margin-bottom: 10px;
+}
+.about-update-row { display: flex; align-items: center; gap: 10px; }
+.about-update-status { margin: 9px 0 0; font-size: var(--fs-xxs); color: var(--text-faint); line-height: 1.5; }
+.about-update-status.about-update-error { color: var(--danger); }
 </style>
