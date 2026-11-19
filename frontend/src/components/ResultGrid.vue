@@ -10,6 +10,8 @@ const props = withDefaults(
     outcome: QueryOutcome | null;
     editable?: boolean;
     loading?: boolean;
+    /** 查询中提示文案，表数据页等场景可覆盖为更具体的描述。 */
+    loadingText?: string;
     edits?: Record<number, Record<string, string | null>>;
     deletedRows?: number[];
     selectedRows?: number[];
@@ -18,7 +20,7 @@ const props = withDefaults(
     /** 更新/删除语句：在结果区突出展示影响行数。 */
     mutationStatement?: boolean;
   }>(),
-  { editable: false, loading: false, mutationStatement: false },
+  { editable: false, loading: false, loadingText: "正在执行查询…", mutationStatement: false },
 );
 
 const emit = defineEmits<{
@@ -237,7 +239,7 @@ defineExpose({ copyText, asText });
 
     <div v-if="loading" class="empty" style="height: 100%">
       <span class="spinner" style="width: 22px; height: 22px"></span>
-      <p>正在执行查询…</p>
+      <p>{{ loadingText }}</p>
     </div>
 
     <EmptyState

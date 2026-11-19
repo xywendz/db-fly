@@ -23,7 +23,8 @@ const store = useWorkspace();
 
 const refObj = computed<ObjectRef>(() => props.tab.ref!);
 const outcome = ref<QueryOutcome | null>(null);
-const loading = ref(false);
+// 页面打开即进入查询中状态，避免元数据加载阶段先显示空结果。
+const loading = ref(true);
 const error = ref("");
 const settings = useSettings();
 const maxRows = ref(settings.state.pageSize);
@@ -627,6 +628,7 @@ async function deleteDocByIndex(i: number) {
       <ResultGrid
         :outcome="outcome"
         :loading="loading"
+        loading-text="数据查询中…"
         :editable="true"
         :edits="updateBuffer"
         :deleted-rows="deleteRows"
