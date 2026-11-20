@@ -40,7 +40,7 @@ if [ "$GOOS_TARGET" = "windows" ] && [[ "$OUTPUT" != *.exe ]]; then
   OUTPUT="${OUTPUT}.exe"
 fi
 go build -trimpath \
-  -ldflags "-s -w -X github.com/db-fly/db-fly/internal/bridge.Version=${VERSION}" \
+  -ldflags "-s -w -X github.com/xywendz/db-fly/internal/bridge.Version=${VERSION}" \
   -o "$OUTPUT" ./cmd/db-fly-server
 
 echo "==> 已生成 $OUTPUT (${GOOS_TARGET}/${GOARCH_TARGET}, ${VERSION})"

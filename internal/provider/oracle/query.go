@@ -5,8 +5,8 @@ import (
 	"database/sql"
 	"strings"
 
-	"github.com/db-fly/db-fly/internal/domain"
-	"github.com/db-fly/db-fly/internal/provider/sqlkit"
+	"github.com/xywendz/db-fly/internal/domain"
+	"github.com/xywendz/db-fly/internal/provider/sqlkit"
 )
 
 // queryExecutor 复用通用执行器，但覆盖 Explain：Oracle 的 EXPLAIN PLAN 本身不返回结果集。

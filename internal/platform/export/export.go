@@ -9,7 +9,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/xywendz/db-fly/internal/domain"
 )
 
 // CSV 输出单个结果页为 CSV，NULL 输出空字符串。

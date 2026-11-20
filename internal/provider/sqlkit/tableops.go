@@ -3,7 +3,7 @@ package sqlkit
 import (
 	"context"
 
-	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/xywendz/db-fly/internal/domain"
 )
 
 // TableOps 是轻量版 domain.TableMaintenance，供已有 DDL 实现的模块复用。

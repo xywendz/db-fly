@@ -1,6 +1,6 @@
 package bridge
 
-import "github.com/db-fly/db-fly/internal/domain"
+import "github.com/xywendz/db-fly/internal/domain"
 
 // PreviewCreateDatabase 生成建库脚本（仅预览，未执行）。
 func (b *Bridge) PreviewCreateDatabase(conn string, spec domain.DatabaseSpec) (domain.Script, error) {

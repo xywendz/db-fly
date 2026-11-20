@@ -10,7 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/xywendz/db-fly/internal/domain"
 )
 
 func (c *cli) connCmd() *cobra.Command {

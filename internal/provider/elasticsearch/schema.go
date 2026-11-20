@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/xywendz/db-fly/internal/domain"
 )
 
 // schemaEditor 生成 Dev-Tools 风格的 Elasticsearch REST 语句（METHOD /path + JSON body），

@@ -9,10 +9,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/db-fly/db-fly/internal/app"
-	"github.com/db-fly/db-fly/internal/bootstrap"
-	"github.com/db-fly/db-fly/internal/platform/audit"
-	"github.com/db-fly/db-fly/internal/platform/config"
+	"github.com/xywendz/db-fly/internal/app"
+	"github.com/xywendz/db-fly/internal/bootstrap"
+	"github.com/xywendz/db-fly/internal/platform/audit"
+	"github.com/xywendz/db-fly/internal/platform/config"
 )
 
 // Options 是多用户管理器的启动参数。

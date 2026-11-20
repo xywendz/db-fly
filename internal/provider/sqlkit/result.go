@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"strings"
 
-	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/xywendz/db-fly/internal/domain"
 )
 
 // RowsResultSet 是基于 *sql.Rows 的流式结果集，兼容任意 database/sql 驱动。

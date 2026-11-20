@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/db-fly/db-fly/internal/domain"
-	"github.com/db-fly/db-fly/internal/platform/export"
+	"github.com/xywendz/db-fly/internal/domain"
+	"github.com/xywendz/db-fly/internal/platform/export"
 )
 
 // ExportDatabase 生成整个数据库的 SQL 导出脚本（建表语句 + 数据 INSERT），

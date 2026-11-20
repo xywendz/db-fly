@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/xywendz/db-fly/internal/domain"
 )
 
 // schemaEditor 只在本模块内部把「结构化编辑」翻译成 MySQL 方言 DDL。

@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/xywendz/db-fly/internal/domain"
 )
 
 // Preferences 是跨 GUI / CLI 共享的用户偏好。

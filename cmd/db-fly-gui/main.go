@@ -13,11 +13,11 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 
-	"github.com/db-fly/db-fly/internal/bootstrap"
-	"github.com/db-fly/db-fly/internal/bridge"
-	"github.com/db-fly/db-fly/internal/selfupdate"
+	"github.com/xywendz/db-fly/internal/bootstrap"
+	"github.com/xywendz/db-fly/internal/bridge"
+	"github.com/xywendz/db-fly/internal/selfupdate"
 	// 注册全部数据库业务模块（各自 init() 自注册到 provider 注册中心）。
-	_ "github.com/db-fly/db-fly/internal/provider/all"
+	_ "github.com/xywendz/db-fly/internal/provider/all"
 )
 
 // 前端构建产物由 build/gui.ps1 从 frontend/dist 复制到 assets/。

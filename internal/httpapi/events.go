@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/db-fly/db-fly/internal/bridge"
+	"github.com/xywendz/db-fly/internal/bridge"
 )
 
 // eventHub 把 GUI 模式的 wails 事件总线等价映射为 SSE 广播。

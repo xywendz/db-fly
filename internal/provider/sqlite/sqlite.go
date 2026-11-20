@@ -10,9 +10,9 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/db-fly/db-fly/internal/domain"
-	"github.com/db-fly/db-fly/internal/provider"
-	"github.com/db-fly/db-fly/internal/provider/sqlkit"
+	"github.com/xywendz/db-fly/internal/domain"
+	"github.com/xywendz/db-fly/internal/provider"
+	"github.com/xywendz/db-fly/internal/provider/sqlkit"
 )
 
 type providerImpl struct{}

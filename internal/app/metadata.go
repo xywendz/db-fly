@@ -3,8 +3,8 @@ package app
 import (
 	"context"
 
-	"github.com/db-fly/db-fly/internal/domain"
-	"github.com/db-fly/db-fly/internal/provider"
+	"github.com/xywendz/db-fly/internal/domain"
+	"github.com/xywendz/db-fly/internal/provider"
 )
 
 // ServerInfo 返回已连接服务端的版本信息。

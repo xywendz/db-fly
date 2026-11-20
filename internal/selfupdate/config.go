@@ -43,10 +43,16 @@ const (
 // into build metadata so such builds compare equal to their base tag.
 var gitDescribe = regexp.MustCompile(`^([vV]?\d+\.\d+\.\d+)-(\d+)-(g[0-9a-fA-F]+)$`)
 
-var checkMu sync.Mutex
+var (
+	checkMu        sync.Mutex
+	currentVersion string
+)
 
 // Init configures app.Updater once. An error means automatic updates are
 // unavailable for this session; the application itself still starts normally.
+// Release assets are routed through the GitHub API asset endpoint because the
+// github.com download host is unreachable on some networks; the bytes and the
+// checksum verification stay the same.
 func Init(u *updater.Updater, version string) error {
 	if u == nil {
 		return fmt.Errorf("selfupdate: updater is nil")
@@ -55,15 +61,20 @@ func Init(u *updater.Updater, version string) error {
 		Repository:    repository,
 		ChecksumAsset: checksumAsset,
 		AssetMatcher:  matchAsset,
-		HTTPClient:    &http.Client{Timeout: httpTimeout},
+		HTTPClient: &http.Client{
+			Transport: newGitHubAssetTransport(http.DefaultTransport, githubAPIURL),
+			Timeout:   httpTimeout,
+		},
 	})
 	if err != nil {
 		return fmt.Errorf("selfupdate: configure GitHub provider: %w", err)
 	}
+	currentVersion = normalizeVersion(version)
 	return u.Init(updater.Config{
-		CurrentVersion:     normalizeVersion(version),
-		Providers:          []updater.Provider{provider},
+		CurrentVersion:     currentVersion,
+		Providers:          []updater.Provider{newFastProvider(provider)},
 		HelperReadyTimeout: helperTimeout,
+		Window:             builtinWindow(),
 	})
 }
 
@@ -120,6 +131,8 @@ func check(ctx context.Context, u *updater.Updater, alwaysShow bool) error {
 	defer cancel()
 
 	if !alwaysShow {
+		// 快路径已下沉到 fastProvider.Check：后台与手动检查统一先走 302
+		// 探测，已是最新时直接返回，不再调用 api.github.com。
 		release, err := u.Check(checkCtx)
 		if err != nil {
 			return fmt.Errorf("selfupdate: check failed: %w", err)

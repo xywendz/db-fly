@@ -3,7 +3,7 @@ package httpapi
 import (
 	"context"
 
-	"github.com/db-fly/db-fly/internal/auth"
+	"github.com/xywendz/db-fly/internal/auth"
 )
 
 // 当前请求的所属用户运行时由 withUser 中间件注入，

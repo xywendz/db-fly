@@ -13,9 +13,9 @@ import (
 
 	gsmssql "github.com/microsoft/go-mssqldb"
 
-	"github.com/db-fly/db-fly/internal/domain"
-	"github.com/db-fly/db-fly/internal/provider"
-	"github.com/db-fly/db-fly/internal/provider/sqlkit"
+	"github.com/xywendz/db-fly/internal/domain"
+	"github.com/xywendz/db-fly/internal/provider"
+	"github.com/xywendz/db-fly/internal/provider/sqlkit"
 )
 
 type providerImpl struct{}

@@ -5,10 +5,10 @@ package bootstrap
 import (
 	"fmt"
 
-	"github.com/db-fly/db-fly/internal/app"
-	"github.com/db-fly/db-fly/internal/platform/audit"
-	"github.com/db-fly/db-fly/internal/platform/config"
-	"github.com/db-fly/db-fly/internal/platform/credential"
+	"github.com/xywendz/db-fly/internal/app"
+	"github.com/xywendz/db-fly/internal/platform/audit"
+	"github.com/xywendz/db-fly/internal/platform/config"
+	"github.com/xywendz/db-fly/internal/platform/credential"
 )
 
 // Runtime 是一次进程启动装配出的运行时；调用方负责在退出时调用 Close。

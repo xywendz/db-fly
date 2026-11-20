@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/xywendz/db-fly/internal/domain"
 )
 
 // PoolSet 按数据库名懒建立独立连接池。

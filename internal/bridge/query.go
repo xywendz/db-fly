@@ -1,8 +1,8 @@
 package bridge
 
 import (
-	"github.com/db-fly/db-fly/internal/app"
-	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/xywendz/db-fly/internal/app"
+	"github.com/xywendz/db-fly/internal/domain"
 )
 
 // ExecuteQuery 执行一次查询并返回完整结果（流式结果在后端聚合后整体返回前端，

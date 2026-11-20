@@ -1,7 +1,7 @@
 # db-fly 项目设计说明
 
 > 本文档描述 db-fly 的**业务设计**、**架构设计**与**构建命令**，与当前代码库实现保持一致。
-> 模块路径：`github.com/db-fly/db-fly`；Go 版本：`go 1.26.0`（见 `go.mod`）。
+> 模块路径：`github.com/xywendz/db-fly`；Go 版本：`go 1.26.0`（见 `go.mod`）。
 
 ---
 
@@ -417,7 +417,7 @@ GOOS_TARGET=windows GOARCH_TARGET=amd64 OUTPUT=dist/dbctl.exe VERSION=v1.0.0 bas
 ```bash
 CGO_ENABLED=0 GOOS="$GOOS_TARGET" GOARCH="$GOARCH_TARGET" \
   go build -trimpath \
-  -ldflags "-s -w -X github.com/db-fly/db-fly/internal/cli.Version=${VERSION}" \
+  -ldflags "-s -w -X github.com/xywendz/db-fly/internal/cli.Version=${VERSION}" \
   -o "$OUTPUT" ./cmd/dbctl
 ```
 
@@ -425,7 +425,7 @@ CGO_ENABLED=0 GOOS="$GOOS_TARGET" GOARCH="$GOARCH_TARGET" \
 
 ```powershell
 $env:CGO_ENABLED = "0"
-go build -trimpath -ldflags "-s -w -X github.com/db-fly/db-fly/internal/cli.Version=dev" -o dist/dbctl.exe ./cmd/dbctl
+go build -trimpath -ldflags "-s -w -X github.com/xywendz/db-fly/internal/cli.Version=dev" -o dist/dbctl.exe ./cmd/dbctl
 ```
 
 **不产出文件的快速编译检查**
@@ -496,12 +496,12 @@ wails3 generate syso -icon build/windows/icon.ico -manifest build/windows/wails.
 # 3) 纯 Go 编译 wails3 入口（不需要 gcc）
 $env:CGO_ENABLED = "0"
 $env:GOOS = "windows"
-go build -trimpath -ldflags "-s -w -H windowsgui -X github.com/db-fly/db-fly/internal/bridge.Version=dev" -o dist/db-fly-gui.exe ./cmd/db-fly-gui
+go build -trimpath -ldflags "-s -w -H windowsgui -X github.com/xywendz/db-fly/internal/bridge.Version=dev" -o dist/db-fly-gui.exe ./cmd/db-fly-gui
 ```
 
 > wails3 v3 的 Windows 后端是纯 Go，`CGO_ENABLED=0` 即可编译真实 GUI；`main.go` 使用 `//go:build windows`、`stub.go` 使用 `//go:build !windows`，因此本机有无 gcc 都不会误编译占位入口。
 > 前端资源通过 `cmd/db-fly-gui/main.go` 的 `//go:embed all:assets` 内联进二进制；构建前务必先把 `frontend/dist` 复制到 `cmd/db-fly-gui/assets/`（见 `build/gui.ps1`）。
-> `-X github.com/db-fly/db-fly/internal/bridge.Version=...` 注入版本号（CLI 版本注入见 `build/cli.sh`，二者独立）。
+> `-X github.com/xywendz/db-fly/internal/bridge.Version=...` 注入版本号（CLI 版本注入见 `build/cli.sh`，二者独立）。
 > 运行时需要 WebView2 Runtime（Windows 11 自带；Windows 10 需安装「Microsoft Edge WebView2 Runtime」），可随分发包附带 Evergreen Bootstrapper。
 
 #### 3.4.1 应用图标（logo.png）
@@ -546,7 +546,7 @@ GOOS_TARGET=linux GOARCH_TARGET=arm64 OUTPUT=dist/db-fly-server bash build/web.s
 **直接构建（等价，不产前端资源）**
 
 ```bash
-CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X github.com/db-fly/db-fly/internal/bridge.Version=dev" -o dist/db-fly-server ./cmd/db-fly-server
+CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X github.com/xywendz/db-fly/internal/bridge.Version=dev" -o dist/db-fly-server ./cmd/db-fly-server
 ```
 
 > 未执行前端构建时，`internal/webui/dist` 仅含占位 `index.html`，运行时页面无法加载；务必先构建前端再链接。

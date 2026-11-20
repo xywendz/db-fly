@@ -12,8 +12,8 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/db-fly/db-fly/internal/auth"
-	"github.com/db-fly/db-fly/internal/bridge"
+	"github.com/xywendz/db-fly/internal/auth"
+	"github.com/xywendz/db-fly/internal/bridge"
 )
 
 const (

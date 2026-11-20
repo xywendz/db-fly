@@ -44,7 +44,7 @@ New-Item -ItemType Directory -Force -Path dist | Out-Null
 $output = "dist/db-fly-server"
 if ($targetOS -eq "windows") { $output += ".exe" }
 go build -trimpath `
-  -ldflags "-s -w -X github.com/db-fly/db-fly/internal/bridge.Version=$version" `
+  -ldflags "-s -w -X github.com/xywendz/db-fly/internal/bridge.Version=$version" `
   -o $output ./cmd/db-fly-server
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 

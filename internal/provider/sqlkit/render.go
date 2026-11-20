@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/xywendz/db-fly/internal/domain"
 )
 
 // RenderCreateTable 由元数据反向渲染等价的 CREATE TABLE 脚本。

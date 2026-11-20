@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/db-fly/db-fly/internal/platform/config"
+	"github.com/xywendz/db-fly/internal/platform/config"
 )
 
 func (c *cli) historyCmd() *cobra.Command {

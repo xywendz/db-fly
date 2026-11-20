@@ -10,7 +10,7 @@
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Create } from "@wailsio/runtime";
+import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wailsio/runtime";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -30,9 +30,7 @@ import * as $models from "./models.js";
  * @returns {$CancellablePromise<domain$0.EditResult>}
  */
 export function ApplyDataEdit(conn, req) {
-    return $Call.ByID(1976852736, conn, req).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType0($result);
-    }));
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.ApplyDataEdit", conn, req);
 }
 
 /**
@@ -42,9 +40,7 @@ export function ApplyDataEdit(conn, req) {
  * @returns {$CancellablePromise<domain$0.ApplyResult>}
  */
 export function ApplyScript(conn, script) {
-    return $Call.ByID(3305332711, conn, script).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType1($result);
-    }));
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.ApplyScript", conn, script);
 }
 
 /**
@@ -52,7 +48,7 @@ export function ApplyScript(conn, script) {
  * @returns {$CancellablePromise<boolean>}
  */
 export function ClearHistory() {
-    return $Call.ByID(2497234367);
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.ClearHistory");
 }
 
 /**
@@ -61,18 +57,16 @@ export function ClearHistory() {
  * @returns {$CancellablePromise<void>}
  */
 export function CloseConnection(nameOrID) {
-    return $Call.ByID(2647221980, nameOrID);
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.CloseConnection", nameOrID);
 }
 
 /**
  * ConnectionCapabilities 返回指定已连接会话的能力集合。
  * @param {string} conn
- * @returns {$CancellablePromise<string[]>}
+ * @returns {$CancellablePromise<string[] | null>}
  */
 export function ConnectionCapabilities(conn) {
-    return $Call.ByID(1021739510, conn).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType2($result);
-    }));
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.ConnectionCapabilities", conn);
 }
 
 /**
@@ -81,7 +75,7 @@ export function ConnectionCapabilities(conn) {
  * @returns {$CancellablePromise<boolean>}
  */
 export function DeleteSavedQuery(nameOrID) {
-    return $Call.ByID(2164585554, nameOrID);
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.DeleteSavedQuery", nameOrID);
 }
 
 /**
@@ -90,9 +84,7 @@ export function DeleteSavedQuery(nameOrID) {
  * @returns {$CancellablePromise<domain$0.TableSchema>}
  */
 export function DescribeObject(req) {
-    return $Call.ByID(4067418318, req).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType3($result);
-    }));
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.DescribeObject", req);
 }
 
 /**
@@ -101,9 +93,7 @@ export function DescribeObject(req) {
  * @returns {$CancellablePromise<domain$0.ExecResult>}
  */
 export function ExecStatement(req) {
-    return $Call.ByID(941621954, req).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType4($result);
-    }));
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.ExecStatement", req);
 }
 
 /**
@@ -113,20 +103,16 @@ export function ExecStatement(req) {
  * @returns {$CancellablePromise<domain$0.QueryOutcome>}
  */
 export function ExecuteQuery(req) {
-    return $Call.ByID(4253308589, req).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType5($result);
-    }));
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.ExecuteQuery", req);
 }
 
 /**
  * ExecuteScript 按语句拆分顺序执行一段脚本，任一失败即停止，返回每个语句的结果。
  * @param {$models.ScriptRequest} req
- * @returns {$CancellablePromise<domain$0.QueryOutcome[]>}
+ * @returns {$CancellablePromise<domain$0.QueryOutcome[] | null>}
  */
 export function ExecuteScript(req) {
-    return $Call.ByID(1863848992, req).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType6($result);
-    }));
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.ExecuteScript", req);
 }
 
 /**
@@ -135,9 +121,7 @@ export function ExecuteScript(req) {
  * @returns {$CancellablePromise<domain$0.QueryOutcome>}
  */
 export function ExplainQuery(req) {
-    return $Call.ByID(1197468565, req).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType5($result);
-    }));
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.ExplainQuery", req);
 }
 
 /**
@@ -150,7 +134,7 @@ export function ExplainQuery(req) {
  * @returns {$CancellablePromise<string>}
  */
 export function ExportDatabase(conn, database, structure, data, maxRows) {
-    return $Call.ByID(2169829347, conn, database, structure, data, maxRows);
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.ExportDatabase", conn, database, structure, data, maxRows);
 }
 
 /**
@@ -160,9 +144,7 @@ export function ExportDatabase(conn, database, structure, data, maxRows) {
  * @returns {$CancellablePromise<$models.ImportOutcomeDTO>}
  */
 export function ImportFile(req) {
-    return $Call.ByID(745442467, req).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType7($result);
-    }));
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.ImportFile", req);
 }
 
 /**
@@ -170,62 +152,50 @@ export function ImportFile(req) {
  * @returns {$CancellablePromise<$models.AppInfo>}
  */
 export function Info() {
-    return $Call.ByID(3577383908).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType8($result);
-    }));
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.Info");
 }
 
 /**
  * KindCapabilities 返回指定类型的能力集合（字符串列表）。
  * @param {string} kind
- * @returns {$CancellablePromise<string[]>}
+ * @returns {$CancellablePromise<string[] | null>}
  */
 export function KindCapabilities(kind) {
-    return $Call.ByID(1040017940, kind).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType2($result);
-    }));
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.KindCapabilities", kind);
 }
 
 /**
  * ListConnections 返回全部连接定义（已剔除密码）。
- * @returns {$CancellablePromise<domain$0.ConnectionConfig[]>}
+ * @returns {$CancellablePromise<domain$0.ConnectionConfig[] | null>}
  */
 export function ListConnections() {
-    return $Call.ByID(1447784529).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType10($result);
-    }));
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.ListConnections");
 }
 
 /**
  * ListDatabases 列出连接下的全部库。
  * @param {string} conn
- * @returns {$CancellablePromise<domain$0.DatabaseInfo[]>}
+ * @returns {$CancellablePromise<domain$0.DatabaseInfo[] | null>}
  */
 export function ListDatabases(conn) {
-    return $Call.ByID(1584464826, conn).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType12($result);
-    }));
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.ListDatabases", conn);
 }
 
 /**
  * ListHistory 返回最近的查询/导入历史（最新在前），limit<=0 表示全部。
  * @param {number} limit
- * @returns {$CancellablePromise<config$0.QueryHistoryEntry[]>}
+ * @returns {$CancellablePromise<config$0.QueryHistoryEntry[] | null>}
  */
 export function ListHistory(limit) {
-    return $Call.ByID(1593635096, limit).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType14($result);
-    }));
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.ListHistory", limit);
 }
 
 /**
  * ListKinds 返回当前已注册的全部数据库类型及其能力，供连接类型下拉与菜单动态生成。
- * @returns {$CancellablePromise<$models.KindInfo[]>}
+ * @returns {$CancellablePromise<$models.KindInfo[] | null>}
  */
 export function ListKinds() {
-    return $Call.ByID(2729530755).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType16($result);
-    }));
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.ListKinds");
 }
 
 /**
@@ -233,12 +203,10 @@ export function ListKinds() {
  * @param {string} conn
  * @param {string} database
  * @param {string} schema
- * @returns {$CancellablePromise<domain$0.ObjectInfo[]>}
+ * @returns {$CancellablePromise<domain$0.ObjectInfo[] | null>}
  */
 export function ListObjects(conn, database, schema) {
-    return $Call.ByID(616433420, conn, database, schema).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType18($result);
-    }));
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.ListObjects", conn, database, schema);
 }
 
 /**
@@ -246,41 +214,33 @@ export function ListObjects(conn, database, schema) {
  * @returns {$CancellablePromise<config$0.Preferences>}
  */
 export function ListPreferences() {
-    return $Call.ByID(595440986).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType19($result);
-    }));
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.ListPreferences");
 }
 
 /**
  * ListSavedQueries 返回全部收藏。
- * @returns {$CancellablePromise<config$0.SavedQuery[]>}
+ * @returns {$CancellablePromise<config$0.SavedQuery[] | null>}
  */
 export function ListSavedQueries() {
-    return $Call.ByID(1053648773).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType21($result);
-    }));
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.ListSavedQueries");
 }
 
 /**
  * ListSchemas 列出某库下的 schema（SQL Server / PG / Oracle）。
  * @param {string} conn
  * @param {string} database
- * @returns {$CancellablePromise<string[]>}
+ * @returns {$CancellablePromise<string[] | null>}
  */
 export function ListSchemas(conn, database) {
-    return $Call.ByID(3248667640, conn, database).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType2($result);
-    }));
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.ListSchemas", conn, database);
 }
 
 /**
  * OpenConnections 返回当前已建立会话（已打开）的连接名列表。
- * @returns {$CancellablePromise<string[]>}
+ * @returns {$CancellablePromise<string[] | null>}
  */
 export function OpenConnections() {
-    return $Call.ByID(1535307889).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType2($result);
-    }));
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.OpenConnections");
 }
 
 /**
@@ -291,22 +251,18 @@ export function OpenConnections() {
  * @returns {$CancellablePromise<domain$0.Script>}
  */
 export function PreviewAlterDatabase(conn, name, spec) {
-    return $Call.ByID(1456801129, conn, name, spec).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType22($result);
-    }));
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.PreviewAlterDatabase", conn, name, spec);
 }
 
 /**
  * PreviewAlterTable 生成表结构变更脚本（仅预览）。
  * @param {string} conn
  * @param {domain$0.ObjectRef} ref
- * @param {domain$0.SchemaChange[]} changes
+ * @param {domain$0.SchemaChange[] | null} changes
  * @returns {$CancellablePromise<domain$0.Script>}
  */
 export function PreviewAlterTable(conn, ref, changes) {
-    return $Call.ByID(2593043432, conn, ref, changes).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType22($result);
-    }));
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.PreviewAlterTable", conn, ref, changes);
 }
 
 /**
@@ -316,9 +272,7 @@ export function PreviewAlterTable(conn, ref, changes) {
  * @returns {$CancellablePromise<domain$0.Script>}
  */
 export function PreviewCopyTable(conn, req) {
-    return $Call.ByID(1951623995, conn, req).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType22($result);
-    }));
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.PreviewCopyTable", conn, req);
 }
 
 /**
@@ -328,9 +282,7 @@ export function PreviewCopyTable(conn, req) {
  * @returns {$CancellablePromise<domain$0.Script>}
  */
 export function PreviewCreateDatabase(conn, spec) {
-    return $Call.ByID(755979029, conn, spec).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType22($result);
-    }));
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.PreviewCreateDatabase", conn, spec);
 }
 
 /**
@@ -340,21 +292,17 @@ export function PreviewCreateDatabase(conn, spec) {
  * @returns {$CancellablePromise<domain$0.Script>}
  */
 export function PreviewCreateTable(conn, def) {
-    return $Call.ByID(1828004460, conn, def).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType22($result);
-    }));
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.PreviewCreateTable", conn, def);
 }
 
 /**
  * PreviewDataEdit 返回数据回写的参数化语句/命令（仅预览，不修改数据）。
  * @param {string} conn
  * @param {domain$0.EditRequest} req
- * @returns {$CancellablePromise<string[]>}
+ * @returns {$CancellablePromise<string[] | null>}
  */
 export function PreviewDataEdit(conn, req) {
-    return $Call.ByID(2999978880, conn, req).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType2($result);
-    }));
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.PreviewDataEdit", conn, req);
 }
 
 /**
@@ -364,9 +312,7 @@ export function PreviewDataEdit(conn, req) {
  * @returns {$CancellablePromise<domain$0.Script>}
  */
 export function PreviewDropObject(conn, ref) {
-    return $Call.ByID(3826824854, conn, ref).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType22($result);
-    }));
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.PreviewDropObject", conn, ref);
 }
 
 /**
@@ -377,9 +323,7 @@ export function PreviewDropObject(conn, ref) {
  * @returns {$CancellablePromise<domain$0.Script>}
  */
 export function PreviewRenameTable(conn, ref, newName) {
-    return $Call.ByID(3148981970, conn, ref, newName).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType22($result);
-    }));
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.PreviewRenameTable", conn, ref, newName);
 }
 
 /**
@@ -390,9 +334,7 @@ export function PreviewRenameTable(conn, ref, newName) {
  * @returns {$CancellablePromise<domain$0.Script>}
  */
 export function PreviewTableAction(conn, ref, action) {
-    return $Call.ByID(1379423338, conn, ref, action).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType22($result);
-    }));
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.PreviewTableAction", conn, ref, action);
 }
 
 /**
@@ -401,7 +343,7 @@ export function PreviewTableAction(conn, ref, action) {
  * @returns {$CancellablePromise<boolean>}
  */
 export function RemoveConnection(nameOrID) {
-    return $Call.ByID(2009031768, nameOrID);
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.RemoveConnection", nameOrID);
 }
 
 /**
@@ -412,9 +354,7 @@ export function RemoveConnection(nameOrID) {
  * @returns {$CancellablePromise<domain$0.ConnectionConfig>}
  */
 export function SaveConnection(c, password, replacePassword) {
-    return $Call.ByID(386160041, c, password, replacePassword).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType9($result);
-    }));
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.SaveConnection", c, password, replacePassword);
 }
 
 /**
@@ -423,7 +363,7 @@ export function SaveConnection(c, password, replacePassword) {
  * @returns {$CancellablePromise<boolean>}
  */
 export function SavePreferences(p) {
-    return $Call.ByID(1535405773, p);
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.SavePreferences", p);
 }
 
 /**
@@ -432,9 +372,7 @@ export function SavePreferences(p) {
  * @returns {$CancellablePromise<config$0.SavedQuery>}
  */
 export function SaveSavedQuery(q) {
-    return $Call.ByID(1303663600, q).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType20($result);
-    }));
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.SaveSavedQuery", q);
 }
 
 /**
@@ -443,9 +381,7 @@ export function SaveSavedQuery(q) {
  * @returns {$CancellablePromise<domain$0.ServerInfo>}
  */
 export function ServerInfo(conn) {
-    return $Call.ByID(2531733367, conn).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType23($result);
-    }));
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.ServerInfo", conn);
 }
 
 /**
@@ -455,19 +391,17 @@ export function ServerInfo(conn) {
  * @returns {$CancellablePromise<string>}
  */
 export function ShowCreateObject(conn, ref) {
-    return $Call.ByID(1175554398, conn, ref);
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.ShowCreateObject", conn, ref);
 }
 
 /**
  * TableKeyColumns 推断可安全定位行的列（主键 → 唯一索引 → _id），供前端默认键列。
  * @param {string} conn
  * @param {domain$0.ObjectRef} ref
- * @returns {$CancellablePromise<string[]>}
+ * @returns {$CancellablePromise<string[] | null>}
  */
 export function TableKeyColumns(conn, ref) {
-    return $Call.ByID(3795368710, conn, ref).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType2($result);
-    }));
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.TableKeyColumns", conn, ref);
 }
 
 /**
@@ -477,9 +411,7 @@ export function TableKeyColumns(conn, ref) {
  * @returns {$CancellablePromise<domain$0.ServerInfo>}
  */
 export function TestConnection(c, password) {
-    return $Call.ByID(541010700, c, password).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType23($result);
-    }));
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.TestConnection", c, password);
 }
 
 /**
@@ -488,9 +420,7 @@ export function TestConnection(c, password) {
  * @returns {$CancellablePromise<domain$0.ServerInfo>}
  */
 export function TestSavedConnection(nameOrID) {
-    return $Call.ByID(1062533919, nameOrID).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType23($result);
-    }));
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.TestSavedConnection", nameOrID);
 }
 
 /**
@@ -499,31 +429,5 @@ export function TestSavedConnection(nameOrID) {
  * @returns {$CancellablePromise<boolean>}
  */
 export function ValidateConnection(c) {
-    return $Call.ByID(3322059946, c);
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.ValidateConnection", c);
 }
-
-// Private type creation functions
-const $$createType0 = domain$0.EditResult.createFrom;
-const $$createType1 = domain$0.ApplyResult.createFrom;
-const $$createType2 = $Create.Array($Create.Any);
-const $$createType3 = domain$0.TableSchema.createFrom;
-const $$createType4 = domain$0.ExecResult.createFrom;
-const $$createType5 = domain$0.QueryOutcome.createFrom;
-const $$createType6 = $Create.Array($$createType5);
-const $$createType7 = $models.ImportOutcomeDTO.createFrom;
-const $$createType8 = $models.AppInfo.createFrom;
-const $$createType9 = domain$0.ConnectionConfig.createFrom;
-const $$createType10 = $Create.Array($$createType9);
-const $$createType11 = domain$0.DatabaseInfo.createFrom;
-const $$createType12 = $Create.Array($$createType11);
-const $$createType13 = config$0.QueryHistoryEntry.createFrom;
-const $$createType14 = $Create.Array($$createType13);
-const $$createType15 = $models.KindInfo.createFrom;
-const $$createType16 = $Create.Array($$createType15);
-const $$createType17 = domain$0.ObjectInfo.createFrom;
-const $$createType18 = $Create.Array($$createType17);
-const $$createType19 = config$0.Preferences.createFrom;
-const $$createType20 = config$0.SavedQuery.createFrom;
-const $$createType21 = $Create.Array($$createType20);
-const $$createType22 = domain$0.Script.createFrom;
-const $$createType23 = domain$0.ServerInfo.createFrom;

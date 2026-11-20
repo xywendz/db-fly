@@ -6,8 +6,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/db-fly/db-fly/internal/domain"
-	"github.com/db-fly/db-fly/internal/platform/audit"
+	"github.com/xywendz/db-fly/internal/domain"
+	"github.com/xywendz/db-fly/internal/platform/audit"
 )
 
 // 结构变更一律走「生成脚本 → 预览确认 → ApplyScript 执行」，不做静默 DDL。

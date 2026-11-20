@@ -7,13 +7,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/db-fly/db-fly/internal/app"
-	"github.com/db-fly/db-fly/internal/platform/audit"
-	"github.com/db-fly/db-fly/internal/platform/config"
-	"github.com/db-fly/db-fly/internal/platform/credential"
-	"github.com/db-fly/db-fly/internal/platform/logging"
-	"github.com/db-fly/db-fly/internal/provider"
-	_ "github.com/db-fly/db-fly/internal/provider/all"
+	"github.com/xywendz/db-fly/internal/app"
+	"github.com/xywendz/db-fly/internal/platform/audit"
+	"github.com/xywendz/db-fly/internal/platform/config"
+	"github.com/xywendz/db-fly/internal/platform/credential"
+	"github.com/xywendz/db-fly/internal/platform/logging"
+	"github.com/xywendz/db-fly/internal/provider"
+	_ "github.com/xywendz/db-fly/internal/provider/all"
 )
 
 // Version 由构建脚本通过 -ldflags 注入。

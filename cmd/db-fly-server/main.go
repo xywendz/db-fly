@@ -18,13 +18,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/db-fly/db-fly/internal/auth"
-	"github.com/db-fly/db-fly/internal/bridge"
-	"github.com/db-fly/db-fly/internal/httpapi"
-	"github.com/db-fly/db-fly/internal/platform/logging"
-	"github.com/db-fly/db-fly/internal/webui"
+	"github.com/xywendz/db-fly/internal/auth"
+	"github.com/xywendz/db-fly/internal/bridge"
+	"github.com/xywendz/db-fly/internal/httpapi"
+	"github.com/xywendz/db-fly/internal/platform/logging"
+	"github.com/xywendz/db-fly/internal/webui"
 	// 注册全部数据库业务模块（各自 init() 自注册到 provider 注册中心）。
-	_ "github.com/db-fly/db-fly/internal/provider/all"
+	_ "github.com/xywendz/db-fly/internal/provider/all"
 )
 
 const defaultAddr = "127.0.0.1:8080"

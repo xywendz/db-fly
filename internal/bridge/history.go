@@ -1,8 +1,8 @@
 package bridge
 
 import (
-	"github.com/db-fly/db-fly/internal/platform/config"
-	"github.com/db-fly/db-fly/internal/provider"
+	"github.com/xywendz/db-fly/internal/platform/config"
+	"github.com/xywendz/db-fly/internal/provider"
 )
 
 // ListHistory 返回最近的查询/导入历史（最新在前），limit<=0 表示全部。

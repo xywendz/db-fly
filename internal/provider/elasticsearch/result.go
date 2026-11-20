@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/xywendz/db-fly/internal/domain"
 )
 
 type esPage struct {

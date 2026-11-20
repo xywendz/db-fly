@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/db-fly/db-fly/internal/domain"
-	"github.com/db-fly/db-fly/internal/provider/sqlkit"
+	"github.com/xywendz/db-fly/internal/domain"
+	"github.com/xywendz/db-fly/internal/provider/sqlkit"
 )
 
 // ddlDriver 实现 PostgreSQL 方言的结构变更脚本生成。

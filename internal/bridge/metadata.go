@@ -1,6 +1,6 @@
 package bridge
 
-import "github.com/db-fly/db-fly/internal/domain"
+import "github.com/xywendz/db-fly/internal/domain"
 
 // ServerInfo 返回已连接服务端的版本信息。
 func (b *Bridge) ServerInfo(conn string) (domain.ServerInfo, error) {

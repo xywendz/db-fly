@@ -5,7 +5,7 @@ package bridge
 import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 
-	"github.com/db-fly/db-fly/internal/app"
+	"github.com/xywendz/db-fly/internal/app"
 )
 
 // NewService 构造 Bridge 并包装为 wails 服务，仅用于 GUI 本地模式。

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/db-fly/db-fly/internal/domain"
-	"github.com/db-fly/db-fly/internal/platform/config"
+	"github.com/xywendz/db-fly/internal/domain"
+	"github.com/xywendz/db-fly/internal/platform/config"
 )
 
 // 通过嵌入 domain 接口，只实现被测用例真正调用的方法。

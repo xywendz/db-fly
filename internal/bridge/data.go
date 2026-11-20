@@ -1,6 +1,6 @@
 package bridge
 
-import "github.com/db-fly/db-fly/internal/domain"
+import "github.com/xywendz/db-fly/internal/domain"
 
 // PreviewDataEdit 返回数据回写的参数化语句/命令（仅预览，不修改数据）。
 func (b *Bridge) PreviewDataEdit(conn string, req domain.EditRequest) ([]string, error) {

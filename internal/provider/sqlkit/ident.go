@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/xywendz/db-fly/internal/domain"
 )
 
 // Quoter 描述方言的标识符引用方式（ANSI 双引号、MySQL 反引号、T-SQL 方括号）。

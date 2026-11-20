@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/xywendz/db-fly/internal/domain"
 )
 
 var (

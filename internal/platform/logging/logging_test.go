@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/db-fly/db-fly/internal/platform/audit"
+	"github.com/xywendz/db-fly/internal/platform/audit"
 )
 
 func TestSetupCreatesLogsDirAndAudit(t *testing.T) {

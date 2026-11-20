@@ -73,7 +73,7 @@ if ($tags) { $tagArgs = @("-tags", $tags) }
 
 New-Item -ItemType Directory -Force -Path dist | Out-Null
 go build -trimpath @tagArgs `
-  -ldflags "-s -w -buildid= -H windowsgui -X github.com/db-fly/db-fly/internal/bridge.Version=$version" `
+  -ldflags "-s -w -buildid= -H windowsgui -X github.com/xywendz/db-fly/internal/bridge.Version=$version" `
   -o dist/db-fly-gui.exe ./cmd/db-fly-gui
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 

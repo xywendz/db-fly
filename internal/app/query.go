@@ -5,10 +5,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/db-fly/db-fly/internal/domain"
-	"github.com/db-fly/db-fly/internal/platform/audit"
-	"github.com/db-fly/db-fly/internal/platform/config"
-	"github.com/db-fly/db-fly/internal/provider"
+	"github.com/xywendz/db-fly/internal/domain"
+	"github.com/xywendz/db-fly/internal/platform/audit"
+	"github.com/xywendz/db-fly/internal/platform/config"
+	"github.com/xywendz/db-fly/internal/provider"
 )
 
 // ResultSink 是流式结果的呈现端口。GUI 实现为分批刷新表格，CLI 实现为累积输出。

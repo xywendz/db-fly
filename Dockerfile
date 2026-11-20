@@ -28,7 +28,7 @@ COPY . .
 COPY --from=frontend /app/frontend/dist-web/ ./internal/webui/dist/
 ARG VERSION=docker
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
-    -ldflags "-s -w -X github.com/db-fly/db-fly/internal/bridge.Version=${VERSION}" \
+    -ldflags "-s -w -X github.com/xywendz/db-fly/internal/bridge.Version=${VERSION}" \
     -o /out/db-fly-server ./cmd/db-fly-server
 
 # ---- Stage 3: minimal runtime ----

@@ -13,8 +13,8 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/db-fly/db-fly/internal/auth"
-	_ "github.com/db-fly/db-fly/internal/provider/all"
+	"github.com/xywendz/db-fly/internal/auth"
+	_ "github.com/xywendz/db-fly/internal/provider/all"
 )
 
 func newTestServer(t *testing.T, allowSignup bool, signupCode string) (*Server, http.Handler, *auth.Manager) {

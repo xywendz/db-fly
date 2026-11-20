@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/xywendz/db-fly/internal/domain"
 )
 
 // BindStyle 描述方言的参数占位符与参数绑定方式。

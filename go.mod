@@ -1,4 +1,4 @@
-module github.com/db-fly/db-fly
+module github.com/xywendz/db-fly
 
 go 1.26.0
 
@@ -13,6 +13,7 @@ require (
 	github.com/xuri/excelize/v2 v2.9.1
 	go.mongodb.org/mongo-driver/v2 v2.10.0
 	golang.org/x/crypto v0.57.0
+	golang.org/x/mod v0.41.0
 	modernc.org/sqlite v1.44.3
 )
 
@@ -48,7 +49,6 @@ require (
 	github.com/xuri/nfp v0.0.1 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f // indirect
-	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect

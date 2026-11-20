@@ -11,11 +11,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/db-fly/db-fly/internal/domain"
-	"github.com/db-fly/db-fly/internal/platform/audit"
-	"github.com/db-fly/db-fly/internal/platform/config"
-	"github.com/db-fly/db-fly/internal/platform/credential"
-	"github.com/db-fly/db-fly/internal/provider"
+	"github.com/xywendz/db-fly/internal/domain"
+	"github.com/xywendz/db-fly/internal/platform/audit"
+	"github.com/xywendz/db-fly/internal/platform/config"
+	"github.com/xywendz/db-fly/internal/platform/credential"
+	"github.com/xywendz/db-fly/internal/provider"
 )
 
 // App 聚合配置、凭证、审计与会话缓存，是所有用例的入口。

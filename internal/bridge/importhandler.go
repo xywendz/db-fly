@@ -1,7 +1,7 @@
 package bridge
 
 import (
-	"github.com/db-fly/db-fly/internal/app"
+	"github.com/xywendz/db-fly/internal/app"
 )
 
 // ImportFile 把 SQL 脚本或结构化数据文件导入指定连接。

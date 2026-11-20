@@ -12,6 +12,6 @@
   "assetdir": "cmd/db-fly-gui/assets",
   "build": {
     "outputfilename": "db-fly-gui.exe",
-    "ldflags": "-X github.com/db-fly/db-fly/internal/bridge.Version=dev"
+    "ldflags": "-X github.com/xywendz/db-fly/internal/bridge.Version=dev"
   }
 }

@@ -11,8 +11,8 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/db-fly/db-fly/internal/bridge"
-	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/xywendz/db-fly/internal/bridge"
+	"github.com/xywendz/db-fly/internal/domain"
 )
 
 // allowedMethods 是 B/S 模式对外的接口契约：与 frontend/src/api/client.ts 的 43 个调用一一对应。

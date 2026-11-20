@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/db-fly/db-fly/internal/platform/audit"
+	"github.com/xywendz/db-fly/internal/platform/audit"
 )
 
 // Setup 在 base 下创建 logs 目录（base 为空时使用当前工作目录），并完成两件事：

@@ -15,9 +15,9 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	"github.com/db-fly/db-fly/internal/domain"
-	"github.com/db-fly/db-fly/internal/provider"
-	"github.com/db-fly/db-fly/internal/provider/sqlkit"
+	"github.com/xywendz/db-fly/internal/domain"
+	"github.com/xywendz/db-fly/internal/provider"
+	"github.com/xywendz/db-fly/internal/provider/sqlkit"
 )
 
 type providerImpl struct{}

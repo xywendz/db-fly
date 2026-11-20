@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/xywendz/db-fly/internal/domain"
 )
 
 // dataEditor 把结构化编辑请求翻译成带 @pN 命名参数的 T-SQL。

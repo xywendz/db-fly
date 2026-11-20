@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/db-fly/db-fly/internal/auth"
+	"github.com/xywendz/db-fly/internal/auth"
 )
 
 // Web 模式的用户会话：随机 token 只存服务端内存，cookie 为 HttpOnly。

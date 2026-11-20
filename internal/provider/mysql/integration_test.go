@@ -13,7 +13,7 @@ import (
 
 	gmysql "github.com/go-sql-driver/mysql"
 
-	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/xywendz/db-fly/internal/domain"
 )
 
 // 集成测试需要真实 MySQL。示例：

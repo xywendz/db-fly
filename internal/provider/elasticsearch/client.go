@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/xywendz/db-fly/internal/domain"
 )
 
 // debugES 控制是否打印每次 Elasticsearch 请求的明细（method / path / body），

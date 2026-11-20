@@ -11,9 +11,9 @@ import (
 
 	goora "github.com/sijms/go-ora/v2"
 
-	"github.com/db-fly/db-fly/internal/domain"
-	"github.com/db-fly/db-fly/internal/provider"
-	"github.com/db-fly/db-fly/internal/provider/sqlkit"
+	"github.com/xywendz/db-fly/internal/domain"
+	"github.com/xywendz/db-fly/internal/provider"
+	"github.com/xywendz/db-fly/internal/provider/sqlkit"
 )
 
 type providerImpl struct{}

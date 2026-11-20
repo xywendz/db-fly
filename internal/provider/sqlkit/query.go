@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/xywendz/db-fly/internal/domain"
 )
 
 // QueryRunner 是基于 database/sql 的通用查询执行器，方言差异由 SelectDialect 与 DBFor 注入。

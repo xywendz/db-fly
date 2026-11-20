@@ -1,6 +1,6 @@
 package bridge
 
-import "github.com/db-fly/db-fly/internal/app"
+import "github.com/xywendz/db-fly/internal/app"
 
 // New 构造 Bridge：把业务内核包装成一组 JSON 可序列化的门面方法。
 //

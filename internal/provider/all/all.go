@@ -13,12 +13,12 @@
 package all
 
 import (
-	_ "github.com/db-fly/db-fly/internal/provider/elasticsearch"
-	_ "github.com/db-fly/db-fly/internal/provider/mongo"
-	_ "github.com/db-fly/db-fly/internal/provider/mssql"
-	_ "github.com/db-fly/db-fly/internal/provider/mysql"
-	_ "github.com/db-fly/db-fly/internal/provider/oracle"
-	_ "github.com/db-fly/db-fly/internal/provider/postgres"
-	_ "github.com/db-fly/db-fly/internal/provider/redis"
-	_ "github.com/db-fly/db-fly/internal/provider/sqlite"
+	_ "github.com/xywendz/db-fly/internal/provider/elasticsearch"
+	_ "github.com/xywendz/db-fly/internal/provider/mongo"
+	_ "github.com/xywendz/db-fly/internal/provider/mssql"
+	_ "github.com/xywendz/db-fly/internal/provider/mysql"
+	_ "github.com/xywendz/db-fly/internal/provider/oracle"
+	_ "github.com/xywendz/db-fly/internal/provider/postgres"
+	_ "github.com/xywendz/db-fly/internal/provider/redis"
+	_ "github.com/xywendz/db-fly/internal/provider/sqlite"
 )

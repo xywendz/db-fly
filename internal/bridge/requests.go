@@ -1,6 +1,6 @@
 package bridge
 
-import "github.com/db-fly/db-fly/internal/domain"
+import "github.com/xywendz/db-fly/internal/domain"
 
 // 以下 DTO 用于把「连接名 + 业务参数」打包成单一 JSON 参数，便于前端一次性传入，
 // 也避免 wails 方法出现过多位置参数导致前端调用易错。

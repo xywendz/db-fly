@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/db-fly/db-fly/internal/domain"
-	"github.com/db-fly/db-fly/internal/provider"
+	"github.com/xywendz/db-fly/internal/domain"
+	"github.com/xywendz/db-fly/internal/provider"
 )
 
 type providerImpl struct{}

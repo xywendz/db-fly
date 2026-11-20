@@ -3,7 +3,7 @@ package sqlkit
 import (
 	"strings"
 
-	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/xywendz/db-fly/internal/domain"
 )
 
 // FilterSort 是表数据浏览时附加的 WHERE / ORDER BY 片段（均不含关键字本身）。

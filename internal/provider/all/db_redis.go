@@ -2,4 +2,4 @@
 
 package all
 
-import _ "github.com/db-fly/db-fly/internal/provider/redis"
+import _ "github.com/xywendz/db-fly/internal/provider/redis"

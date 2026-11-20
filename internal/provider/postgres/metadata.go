@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/db-fly/db-fly/internal/domain"
-	"github.com/db-fly/db-fly/internal/provider/sqlkit"
+	"github.com/xywendz/db-fly/internal/domain"
+	"github.com/xywendz/db-fly/internal/provider/sqlkit"
 )
 
 // metadataBrowser 从 information_schema / pg_catalog 读取只读元数据。

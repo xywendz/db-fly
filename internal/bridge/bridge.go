@@ -13,8 +13,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/db-fly/db-fly/internal/app"
-	"github.com/db-fly/db-fly/internal/domain"
+	"github.com/xywendz/db-fly/internal/app"
+	"github.com/xywendz/db-fly/internal/domain"
 )
 
 // EventEmitter 把后端事件（进度、通知）推送给前端。

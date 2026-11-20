@@ -1,9 +1,9 @@
 package bridge
 
 import (
-	"github.com/db-fly/db-fly/internal/app"
-	"github.com/db-fly/db-fly/internal/domain"
-	"github.com/db-fly/db-fly/internal/provider"
+	"github.com/xywendz/db-fly/internal/app"
+	"github.com/xywendz/db-fly/internal/domain"
+	"github.com/xywendz/db-fly/internal/provider"
 )
 
 // ListConnections 返回全部连接定义（已剔除密码）。
