@@ -222,6 +222,56 @@ func (d *ddlDriver) DropObject(ref domain.ObjectRef) ([]string, error) {
 	return []string{"DROP TABLE IF EXISTS " + qualifiedName + " CASCADE"}, nil
 }
 
+// DropDatabaseScript 生成删库脚本，并绑定到可连接的维护库执行。
+// PG13+ 使用 FORCE 由服务端安全地断开会话；旧版显式终止其它后端后删除。
+func (d *ddlDriver) DropDatabaseScript(ctx context.Context, name string) (domain.Script, error) {
+	ident, err := ansi.Ident(name)
+	if err != nil {
+		return domain.Script{}, err
+	}
+	maintenance := d.cfg.Database
+	if maintenance == "" || strings.EqualFold(maintenance, name) {
+		maintenance = "postgres"
+	}
+	db, err := d.pools.DB(ctx, maintenance)
+	if err != nil {
+		return domain.Script{}, err
+	}
+	var version int
+	if err := db.QueryRowContext(ctx, "SELECT current_setting('server_version_num')::int").Scan(&version); err != nil {
+		return domain.Script{}, domain.WrapError(domain.CodeQuery, "postgresql.drop_database", err,
+			"读取 PostgreSQL 版本失败")
+	}
+
+	return dropDatabaseScript(version, name, ident, maintenance), nil
+}
+
+func dropDatabaseScript(version int, name, ident, maintenance string) domain.Script {
+	warnings := []string{"删除数据库会丢失其中全部对象与数据，不可撤销。"}
+	var statements []string
+	if version >= 130000 {
+		statements = []string{"DROP DATABASE " + ident + " WITH (FORCE)"}
+		warnings = append([]string{
+			"PostgreSQL 13+ 将自动终止该库上的其它会话（包括本应用已打开的标签页），未提交事务会回滚。",
+		}, warnings...)
+	} else {
+		literal := sqlkit.EscapeLiteral(name)
+		statements = []string{
+			"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '" +
+				literal + "' AND pid <> pg_backend_pid()",
+			"SELECT pg_sleep(0.2)",
+			"DROP DATABASE " + ident,
+		}
+		warnings = append([]string{
+			"将终止该库上的其它会话（包括本应用已打开的标签页），未提交事务会回滚；执行账号需具备相应权限。",
+		}, warnings...)
+	}
+	return domain.Script{
+		Format: "sql", Database: maintenance,
+		Statements: statements, Warnings: warnings,
+	}
+}
+
 // ShowCreate 优先调用服务端 pg_get_tabledef（若扩展提供），否则由元数据反向渲染。
 func (d *ddlDriver) ShowCreate(ctx context.Context, ref domain.ObjectRef) (string, error) {
 	browser := &metadataBrowser{cfg: d.cfg, pools: d.pools}

@@ -539,18 +539,26 @@ async function dropDatabase(conn: string, db: string) {
     store.notify(`${kind} 不支持通过 SQL 删除数据库`, "warn", 6000);
     return;
   }
-  const stmt = `DROP DATABASE ${quoteIdent(db, kind)};`;
-  const done = await applyScriptWithConfirm(conn, {
-    statements: [stmt],
-    warnings: ["删除数据库会丢失其中全部对象与数据，不可撤销。"],
-  }, {
-    title: `删除数据库 ${db}`, confirmText: "删除", danger: true, requireText: db,
-  });
-  if (!done) return;
-  for (const t of store.tabs.filter((x) => x.conn === conn && (x.ref?.database === db || x.database === db))) {
-    store.closeTab(t.id);
+  try {
+    // PostgreSQL 需要先断开该库的其它会话，否则 55006 会让 DROP DATABASE 失败。
+    // 由后端按服务端版本生成方言脚本，避免前端直接拼接清理会话的 SQL。
+    const script: Script = kind === "postgresql"
+      ? await api.previewDropDatabase(conn, db)
+      : {
+          statements: [`DROP DATABASE ${quoteIdent(db, kind)};`],
+          warnings: ["删除数据库会丢失其中全部对象与数据，不可撤销。"],
+        };
+    const done = await applyScriptWithConfirm(conn, script, {
+      title: `删除数据库 ${db}`, confirmText: "删除", danger: true, requireText: db,
+    });
+    if (!done) return;
+    for (const t of store.tabs.filter((x) => x.conn === conn && (x.ref?.database === db || x.database === db))) {
+      store.closeTab(t.id);
+    }
+    await refreshConn(conn);
+  } catch (e: any) {
+    store.setStatus(`删除数据库 ${db} 失败：${e?.message ?? e}`, "error");
   }
-  await refreshConn(conn);
 }
 
 /** 连接节点的主要“+”动作：ES 没有数据库，直接打开索引设计器；其余类型走新建数据库。 */

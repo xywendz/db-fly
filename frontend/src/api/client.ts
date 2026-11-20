@@ -121,6 +121,8 @@ export const previewCreateDatabase = (conn: string, spec: DatabaseSpec) =>
   call<Script>(raw.PreviewCreateDatabase(conn, spec));
 export const previewAlterDatabase = (conn: string, name: string, spec: DatabaseSpec) =>
   call<Script>(raw.PreviewAlterDatabase(conn, name, spec));
+export const previewDropDatabase = (conn: string, name: string) =>
+  call<Script>(raw.PreviewDropDatabase(conn, name));
 export const previewCreateTable = (conn: string, def: TableDefinition) =>
   call<Script>(raw.PreviewCreateTable(conn, def));
 export const previewAlterTable = (conn: string, ref: ObjectRef, changes: SchemaChange[]) =>

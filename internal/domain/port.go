@@ -30,6 +30,12 @@ type TableMaintenance interface {
 	TableActionScript(ctx context.Context, ref ObjectRef, action TableAction) (Script, error)
 }
 
+// DatabaseDropper 为支持按库删除并清理活动会话的模块实现。
+// 它是可选端口：目前 PostgreSQL 需要强制断开其它后端才能删除数据库。
+type DatabaseDropper interface {
+	DropDatabaseScript(ctx context.Context, name string) (Script, error)
+}
+
 // MetadataBrowser 提供元数据树所需的只读查询能力。
 type MetadataBrowser interface {
 	ListDatabases(ctx context.Context) ([]DatabaseInfo, error)

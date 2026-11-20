@@ -286,6 +286,16 @@ export function PreviewCreateDatabase(conn, spec) {
 }
 
 /**
+ * PreviewDropDatabase 生成删库脚本（仅预览，会包含清理活动会话的语句）。
+ * @param {string} conn
+ * @param {string} name
+ * @returns {$CancellablePromise<domain$0.Script>}
+ */
+export function PreviewDropDatabase(conn, name) {
+    return $Call.ByName("github.com/xywendz/db-fly/internal/bridge.Bridge.PreviewDropDatabase", conn, name);
+}
+
+/**
  * PreviewCreateTable 生成建表脚本（仅预览）。
  * @param {string} conn
  * @param {domain$0.TableDefinition} def

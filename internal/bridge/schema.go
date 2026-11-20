@@ -12,6 +12,11 @@ func (b *Bridge) PreviewAlterDatabase(conn, name string, spec domain.DatabaseSpe
 	return b.app.PreviewAlterDatabase(b.ctx(), conn, name, spec)
 }
 
+// PreviewDropDatabase 生成删库脚本（仅预览，会包含清理活动会话的语句）。
+func (b *Bridge) PreviewDropDatabase(conn, name string) (domain.Script, error) {
+	return b.app.PreviewDropDatabase(b.ctx(), conn, name)
+}
+
 // PreviewCreateTable 生成建表脚本（仅预览）。
 func (b *Bridge) PreviewCreateTable(conn string, def domain.TableDefinition) (domain.Script, error) {
 	return b.app.PreviewCreateTable(b.ctx(), conn, def)

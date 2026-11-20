@@ -29,8 +29,8 @@ var allowedMethods = map[string]struct{}{
 	// 查询执行
 	"ExecuteQuery": {}, "ExplainQuery": {}, "ExecStatement": {}, "ExecuteScript": {},
 	// 结构 / 建表
-	"PreviewCreateDatabase": {}, "PreviewAlterDatabase": {}, "PreviewCreateTable": {},
-	"PreviewAlterTable": {}, "PreviewDropObject": {}, "PreviewRenameTable": {},
+	"PreviewCreateDatabase": {}, "PreviewAlterDatabase": {}, "PreviewDropDatabase": {},
+	"PreviewCreateTable": {}, "PreviewAlterTable": {}, "PreviewDropObject": {}, "PreviewRenameTable": {},
 	"ShowCreateObject": {}, "PreviewTableAction": {}, "PreviewCopyTable": {},
 	"ApplyScript": {}, "ExportDatabase": {},
 	// 数据编辑

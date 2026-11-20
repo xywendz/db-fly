@@ -124,6 +124,20 @@ type DDLDriver interface {
 	Empty(qualified string) []string
 }
 
+// DriverDatabaseDropper 是 DDLDriver 的可选能力，用于生成删库脚本。
+type DriverDatabaseDropper interface {
+	DropDatabaseScript(ctx context.Context, name string) (domain.Script, error)
+}
+
+// DropDatabaseScript 生成删库脚本；不支持的方言返回明确的 unsupported 错误。
+func (s Schema) DropDatabaseScript(ctx context.Context, name string) (domain.Script, error) {
+	dropper, ok := s.Driver.(DriverDatabaseDropper)
+	if !ok {
+		return domain.Script{}, s.unsupported("删除数据库")
+	}
+	return dropper.DropDatabaseScript(ctx, name)
+}
+
 // ScriptRunner 顺序执行 SQL 脚本；PostgreSQL 等按库分池的模块可设置 DBFor。
 type ScriptRunner struct {
 	DB     *sql.DB

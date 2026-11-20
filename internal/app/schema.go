@@ -28,6 +28,31 @@ func (a *App) PreviewAlterDatabase(ctx context.Context, conn, name string, spec 
 	return s.Schema().AlterDatabaseScript(ctx, name, spec)
 }
 
+// PreviewDropDatabase 生成删库脚本；需要断开活动会话的方言通过可选端口提供实现。
+func (a *App) PreviewDropDatabase(ctx context.Context, conn, name string) (domain.Script, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return domain.Script{}, domain.NewError(domain.CodeValidation, "drop_database", "请填写数据库名称")
+	}
+	c, err := a.cfgOf(conn)
+	if err != nil {
+		return domain.Script{}, err
+	}
+	if c.ReadOnly {
+		return domain.Script{}, domain.NewError(domain.CodeReadOnly, "drop_database", "只读连接禁止删除数据库")
+	}
+	s, err := a.Session(ctx, conn)
+	if err != nil {
+		return domain.Script{}, err
+	}
+	dropper, ok := s.Schema().(domain.DatabaseDropper)
+	if !ok {
+		return domain.Script{}, domain.NewError(domain.CodeUnsupported, "drop_database",
+			"%s 暂不支持生成删库脚本", c.Kind)
+	}
+	return dropper.DropDatabaseScript(ctx, name)
+}
+
 func (a *App) PreviewCreateTable(ctx context.Context, conn string, def domain.TableDefinition) (domain.Script, error) {
 	s, err := a.Session(ctx, conn)
 	if err != nil {
