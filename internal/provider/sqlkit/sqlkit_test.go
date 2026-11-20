@@ -1,6 +1,10 @@
 package sqlkit
 
 import (
+	"context"
+	"database/sql"
+	"database/sql/driver"
+	"errors"
 	"strconv"
 	"strings"
 	"testing"
@@ -245,5 +249,56 @@ func TestRenderCreateTable(t *testing.T) {
 		!strings.Contains(text, `CREATE UNIQUE INDEX "idx_name" ON "public"."users" ("name")`) ||
 		!strings.HasPrefix(text, "-- 测试") {
 		t.Fatalf("渲染结果错误:\n%s", text)
+	}
+}
+
+var scriptTestStatements []string
+
+type scriptTestDriver struct{}
+
+func (scriptTestDriver) Open(string) (driver.Conn, error) { return scriptTestConn{}, nil }
+
+type scriptTestConn struct{}
+
+func (scriptTestConn) Prepare(string) (driver.Stmt, error) {
+	return nil, errors.New("not implemented")
+}
+func (scriptTestConn) Close() error              { return nil }
+func (scriptTestConn) Begin() (driver.Tx, error) { return nil, errors.New("not implemented") }
+func (scriptTestConn) ExecContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Result, error) {
+	scriptTestStatements = append(scriptTestStatements, query)
+	return driver.RowsAffected(0), nil
+}
+
+func init() {
+	sql.Register("dbfly-sqlkit-recording", scriptTestDriver{})
+}
+
+func TestScriptRunnerApplyUsesDefaultPoolWhenDatabaseEmpty(t *testing.T) {
+	scriptTestStatements = nil
+	db, err := sql.Open("dbfly-sqlkit-recording", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	var gotDatabases []string
+	runner := ScriptRunner{
+		DBFor: func(_ context.Context, database string) (*sql.DB, error) {
+			gotDatabases = append(gotDatabases, database)
+			return db, nil
+		},
+	}
+	result, err := runner.Apply(context.Background(), domain.Script{
+		Statements: []string{"CREATE DATABASE demo"},
+	})
+	if err != nil {
+		t.Fatalf("执行脚本失败: %v", err)
+	}
+	if len(gotDatabases) != 1 || gotDatabases[0] != "" {
+		t.Fatalf("DBFor 调用参数错误: %#v", gotDatabases)
+	}
+	if len(result.Outcomes) != 1 || len(scriptTestStatements) != 1 || scriptTestStatements[0] != "CREATE DATABASE demo" {
+		t.Fatalf("脚本未正确执行: outcomes=%#v statements=%#v", result.Outcomes, scriptTestStatements)
 	}
 }

@@ -137,8 +137,8 @@ type ScriptRunner struct {
 func (r ScriptRunner) Apply(ctx context.Context, script domain.Script) (domain.ApplyResult, error) {
 	result := domain.ApplyResult{Outcomes: make([]domain.ExecOutcome, 0, len(script.Statements))}
 	db := r.DB
-	var err error
-	if r.DBFor != nil && script.Database != "" {
+	if r.DBFor != nil {
+		var err error
 		db, err = r.DBFor(ctx, script.Database)
 		if err != nil {
 			return result, err
