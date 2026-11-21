@@ -631,36 +631,58 @@ function openMenu(e: MouseEvent, items: MenuItem[]) {
   menu.value = { open: true, x: e.clientX, y: e.clientY, items };
 }
 
+/** 按固定分组顺序追加菜单项，保证连接/库/表右键菜单的分类区域一致。 */
+function appendMenuGroup(items: MenuItem[], group: MenuItem[]) {
+  if (!group.length) return;
+  if (items.length) items.push({ separator: true });
+  items.push(...group);
+}
+
 async function menuConn(e: MouseEvent, c: ConnectionConfig) {
   selectedKey.value = `c:${c.name}`;
   const db = firstDb(c.name);
   await store.loadOpenConns().catch(() => {});
   const kind = c.kind;
-  const items: MenuItem[] = [
+  const items: MenuItem[] = [];
+
+  // 分组顺序：刷新 → 新建/打开 → 数据 → 管理 → 危险 → 复制。
+  appendMenuGroup(items, [
+    { label: "刷新数据库", icon: "refresh", action: () => refreshConn(c.name) },
+  ]);
+
+  const create: MenuItem[] = [
     { label: "新建查询", icon: "terminal", action: () => store.openQueryTab(c.name) },
     { label: "测试连接", icon: "bolt", action: () => testConn(c) },
-    { separator: true },
   ];
   if (kind === "redis") {
-  	items.push({ label: "新建数据库", icon: "database", action: () => promptRedisDb(c.name) });
+    create.push({ label: "新建数据库", icon: "database", action: () => promptRedisDb(c.name) });
   } else if (kind === "elasticsearch") {
-  	// Elasticsearch 没有数据库概念：连接右键直接创建索引，而非新建逻辑库（索引模板）。
-  	items.push({ label: "新建索引", icon: "search", action: () => store.openESIndexTab(c.name, "default", "") });
+    // Elasticsearch 没有数据库概念：连接右键直接创建索引，而非新建逻辑库（索引模板）。
+    create.push({ label: "新建索引", icon: "search", action: () => store.openESIndexTab(c.name, "default", "") });
   } else if (kind === "mongodb") {
-  	items.push({ label: "新建数据库", icon: "database", action: () => createDatabase(c.name) });
+    create.push({ label: "新建数据库", icon: "database", action: () => createDatabase(c.name) });
   } else {
-  	items.push({ label: "新增数据库", icon: "database", action: () => createDatabase(c.name) });
+    create.push({ label: "新增数据库", icon: "database", action: () => createDatabase(c.name) });
   }
-  items.push(
+  appendMenuGroup(items, create);
+
+  appendMenuGroup(items, [
     { label: "导入数据", icon: "upload", action: () => store.openImportTab(c.name, db, "") },
     { label: "导出数据", icon: "download", action: () => store.openExportTab(c.name, db, "") },
-    { separator: true },
+  ]);
+
+  appendMenuGroup(items, [
     { label: "编辑连接", icon: "edit", action: () => emit("edit-conn", c) },
-    { label: "刷新数据库", icon: "refresh", action: () => refreshConn(c.name) },
-    { label: "复制名称", icon: "copy", action: () => copyName(c.name) },
+  ]);
+
+  appendMenuGroup(items, [
     { label: "关闭连接", icon: "power", danger: true, disabled: !store.openConns.includes(c.name), action: () => closeConn(c) },
     { label: "删除连接", icon: "trash", danger: true, action: () => removeConn(c) },
-  );
+  ]);
+
+  appendMenuGroup(items, [
+    { label: "复制名称", icon: "copy", action: () => copyName(c.name) },
+  ]);
   openMenu(e, items);
 }
 
@@ -697,106 +719,135 @@ async function closeConn(c: ConnectionConfig) {
 function menuDb(e: MouseEvent, conn: string, db: string) {
   selectedKey.value = `d:${conn}|${db}`;
   const kind = connKind(conn);
-  const items: MenuItem[] = [
-    { label: "新建查询", icon: "terminal", action: () => store.openQueryTab(conn) },
+  const items: MenuItem[] = [];
+
+  appendMenuGroup(items, [
     { label: "刷新对象", icon: "refresh", action: () => refreshObjects(conn, db) },
-    { separator: true },
+  ]);
+
+  const create: MenuItem[] = [
+    { label: "新建查询", icon: "terminal", action: () => store.openQueryTab(conn) },
+  ];
+  if (kind === "redis") {
+    create.push({ label: "新建 key", icon: "key", action: () => store.openRedisKeyTab(conn, db, "") });
+  } else if (kind === "mongodb") {
+    create.push({ label: "新建集合", icon: "layers", action: () => store.openMongoCollectionTab(conn, db, "") });
+  } else if (kind === "elasticsearch") {
+    create.push({ label: "新建索引", icon: "search", action: () => store.openESIndexTab(conn, db, "") });
+    create.push({ label: "新建查询 (DSL)", icon: "terminal", action: () => store.openQueryTab(conn) });
+  } else {
+    create.push({
+      label: "新建表",
+      icon: "table",
+      disabled: !store.hasCap(conn, "create_table"),
+      action: () => store.openDesignerTab(conn, db),
+    });
+  }
+  appendMenuGroup(items, create);
+
+  const data: MenuItem[] = [
     { label: "导入数据", icon: "upload", action: () => store.openImportTab(conn, db, "") },
     { label: "导出数据", icon: "download", action: () => store.openExportTab(conn, db, "") },
   ];
-  if (kind === "redis") {
-    items.push({ label: "新建 key", icon: "key", action: () => store.openRedisKeyTab(conn, db, "") });
-  } else if (kind === "mongodb") {
-    items.push({ label: "新建集合", icon: "layers", action: () => store.openMongoCollectionTab(conn, db, "") });
-  } else if (kind === "elasticsearch") {
-    items.push({ label: "新建索引", icon: "search", action: () => store.openESIndexTab(conn, db, "") });
-    items.push({ label: "新建查询 (DSL)", icon: "terminal", action: () => store.openQueryTab(conn) });
-  } else {
-    items.push(
-      {
-        label: "新建表",
-        icon: "table",
-        disabled: !store.hasCap(conn, "create_table"),
-        action: () => store.openDesignerTab(conn, db),
-      },
-      { label: "导出整个数据库", icon: "download", disabled: !relational(connKind(conn)), action: () => store.openExportTab(conn, db, "") },
-      { separator: true },
+  if (relational(kind)) {
+    data.push({ label: "导出整个数据库", icon: "download", action: () => store.openExportTab(conn, db, "") });
+  }
+  appendMenuGroup(items, data);
+
+  if (relational(kind)) {
+    appendMenuGroup(items, [
       { label: "修改数据库", icon: "settings", action: () => alterDatabase(conn, db) },
       { label: "重命名数据库", icon: "edit", action: () => renameDatabase(conn, db) },
+    ]);
+    appendMenuGroup(items, [
       { label: "删除数据库", icon: "trash", danger: true, action: () => dropDatabase(conn, db) },
-    );
+    ]);
   }
-  items.push({ separator: true }, { label: "复制名称", icon: "copy", action: () => copyName(db) });
+
+  appendMenuGroup(items, [
+    { label: "复制名称", icon: "copy", action: () => copyName(db) },
+  ]);
   openMenu(e, items);
 }
 
 function menuObj(e: MouseEvent, conn: string, db: string, o: ObjectInfo) {
   selectedKey.value = `o:${conn}|${db}|${o.name}`;
   const ref = objRef(db, o.name);
-  // Redis 的「对象」即键：只提供键级操作，不展示表结构 / 复制表 / 截断等关系型功能。
-  if (connKind(conn) === "redis") {
-    openMenu(e, [
-      { label: "打开", icon: "key", action: () => store.openRedisKeyTab(conn, db, o.name) },
-      { separator: true },
-      { label: "重命名", icon: "edit", action: () => renameObject(conn, db, o) },
-      { label: "删除", icon: "trash", danger: true, action: () => dropObject(conn, db, o) },
-      { separator: true },
-      { label: "复制名称", icon: "copy", action: () => copyName(o.name) },
-    ]);
-    return;
-  }
-  if (connKind(conn) === "mongodb") {
-    openMenu(e, [
+  const kind = connKind(conn);
+  const items: MenuItem[] = [];
+
+  // 与连接/库菜单保持同一分组顺序：刷新 → 新建/打开 → 数据 → 管理 → 危险 → 复制。
+  appendMenuGroup(items, [
+    { label: "刷新对象", icon: "refresh", action: () => refreshObjects(conn, db) },
+  ]);
+
+  const open: MenuItem[] = [];
+  if (kind === "redis") {
+    // Redis 的「对象」即键：只提供键级操作，不展示表结构 / 复制表 / 截断等关系型功能。
+    open.push({ label: "打开", icon: "key", action: () => store.openRedisKeyTab(conn, db, o.name) });
+  } else if (kind === "mongodb") {
+    open.push(
       { label: "浏览数据", icon: "table", action: () => store.openDataTab(conn, ref) },
       { label: "查看 / 修改结构", icon: "column", action: () => store.openMongoCollectionTab(conn, db, o.name) },
-      { separator: true },
-      { label: "导入数据", icon: "upload", action: () => store.openImportTab(conn, db, o.name) },
-      { label: "导出数据", icon: "download", action: () => store.openExportTab(conn, db, o.name) },
-      { separator: true },
-      { label: "重命名", icon: "edit", action: () => renameObject(conn, db, o) },
-      { label: "删除", icon: "trash", danger: true, action: () => dropObject(conn, db, o) },
-      { separator: true },
-      { label: "复制名称", icon: "copy", action: () => copyName(o.name) },
-    ]);
-    return;
-  }
-  if (connKind(conn) === "elasticsearch") {
-    openMenu(e, [
+    );
+  } else if (kind === "elasticsearch") {
+    open.push(
       { label: "浏览文档", icon: "table", action: () => store.openDataTab(conn, ref) },
       { label: "索引定义 (PUT 脚本)", icon: "code", action: () => store.openESIndexTab(conn, db, o.name) },
       { label: "查看字段 / 设置", icon: "column", action: () => store.openStructureTab(conn, ref) },
-      { separator: true },
+    );
+  } else {
+    open.push(
+      { label: "浏览数据", icon: "table", action: () => store.openDataTab(conn, ref) },
+      { label: "查看 / 修改结构", icon: "column", action: () => store.openStructureTab(conn, ref) },
+    );
+  }
+  appendMenuGroup(items, open);
+
+  const data: MenuItem[] = [];
+  if (kind === "elasticsearch") {
+    data.push(
       { label: "复制索引（结构）", icon: "copy", action: () => cloneIndex(conn, db, o, false) },
       { label: "复制索引（含数据）", icon: "copy", action: () => cloneIndex(conn, db, o, true) },
-      { separator: true },
+    );
+  }
+  if (kind !== "redis") {
+    data.push(
       { label: "导入数据", icon: "upload", action: () => store.openImportTab(conn, db, o.name) },
       { label: "导出数据", icon: "download", action: () => store.openExportTab(conn, db, o.name) },
-      { separator: true },
-      { label: "刷新对象", icon: "refresh", action: () => refreshObjects(conn, db) },
-      { label: "删除索引", icon: "trash", danger: true, action: () => dropObject(conn, db, o) },
-      { separator: true },
-      { label: "复制名称", icon: "copy", action: () => copyName(o.name) },
-    ]);
-    return;
+    );
   }
-  openMenu(e, [
-    { label: "浏览数据", icon: "table", action: () => store.openDataTab(conn, ref) },
-    { label: "查看 / 修改结构", icon: "column", action: () => store.openStructureTab(conn, ref) },
-    { label: "复制表结构", icon: "copy", disabled: !relational(connKind(conn)), action: () => copyTable(conn, db, o, false) },
-    { label: "复制表结构和数据", icon: "copy", disabled: !relational(connKind(conn)), action: () => copyTable(conn, db, o, true) },
-    { separator: true },
-    { label: "导入数据", icon: "upload", action: () => store.openImportTab(conn, db, o.name) },
-    { label: "导出数据", icon: "download", action: () => store.openExportTab(conn, db, o.name) },
-    { separator: true },
-    { label: "截断数据 (TRUNCATE)", icon: "bolt", danger: true, disabled: !store.hasCap(conn, "truncate_table"), action: () => runTableAction(conn, db, o, "truncate") },
-    { label: "清空数据 (DELETE)", icon: "trash", danger: true, disabled: !store.hasCap(conn, "empty_table"), action: () => runTableAction(conn, db, o, "empty") },
-    { separator: true },
-    { label: "刷新对象", icon: "refresh", action: () => refreshObjects(conn, db) },
-    { label: "重命名", icon: "edit", action: () => renameObject(conn, db, o) },
-    { label: "删除", icon: "trash", danger: true, action: () => dropObject(conn, db, o) },
-    { separator: true },
+  if (relational(kind)) {
+    data.push(
+      { label: "复制表结构", icon: "copy", action: () => copyTable(conn, db, o, false) },
+      { label: "复制表结构和数据", icon: "copy", action: () => copyTable(conn, db, o, true) },
+    );
+  }
+  appendMenuGroup(items, data);
+
+  const manage: MenuItem[] = [];
+  if (kind !== "elasticsearch") {
+    manage.push({ label: "重命名", icon: "edit", action: () => renameObject(conn, db, o) });
+  }
+  appendMenuGroup(items, manage);
+
+  const danger: MenuItem[] = [];
+  if (relational(kind)) {
+    danger.push(
+      { label: "截断数据 (TRUNCATE)", icon: "bolt", danger: true, disabled: !store.hasCap(conn, "truncate_table"), action: () => runTableAction(conn, db, o, "truncate") },
+      { label: "清空数据 (DELETE)", icon: "trash", danger: true, disabled: !store.hasCap(conn, "empty_table"), action: () => runTableAction(conn, db, o, "empty") },
+    );
+  }
+  danger.push({
+    label: kind === "elasticsearch" ? "删除索引" : "删除",
+    icon: "trash", danger: true, action: () => dropObject(conn, db, o),
+  });
+  appendMenuGroup(items, danger);
+
+  appendMenuGroup(items, [
     { label: "复制名称", icon: "copy", action: () => copyName(o.name) },
   ]);
+  openMenu(e, items);
 }
 
 // 单击对象：选中该节点（高亮在右键时保持），并激活所属连接。
@@ -917,11 +968,6 @@ function objIcon(o: ObjectInfo) {
               <span class="caret">{{ dbOpen(c.name, db.name) ? "▾" : "▸" }}</span>
               <Icon name="folder" :size="14" style="color: var(--warn)" />
               <span class="label" :title="db.name">{{ db.name }}</span>
-              <span
-                v-if="objectCount(c.name, db.name) !== null && connKind(c.name) !== 'redis'"
-                class="count-badge"
-                :title="`共 ${objectCount(c.name, db.name)} 个${objectLabel(c.name)}`"
-              >{{ objectCount(c.name, db.name) }}</span>
               <span class="node-actions">
                 <button
                   v-if="connKind(c.name) !== 'redis'"
@@ -940,6 +986,11 @@ function objIcon(o: ObjectInfo) {
                   <Icon name="more" :size="13" />
                 </button>
               </span>
+              <span
+                v-if="objectCount(c.name, db.name) !== null && connKind(c.name) !== 'redis'"
+                class="count-badge"
+                :title="`共 ${objectCount(c.name, db.name)} 个${objectLabel(c.name)}`"
+              >{{ objectCount(c.name, db.name) }}</span>
             </div>
             <div
               v-if="activeFilterKey === filterKey(c.name, db.name) || hasDbFilter(c.name, db.name)"
@@ -976,7 +1027,6 @@ function objIcon(o: ObjectInfo) {
               >
                 <Icon :name="objIcon(o)" :size="13" style="color: var(--text-dim)" />
                 <span class="label" :title="o.name">{{ o.name }}</span>
-                <span class="badge">{{ o.type }}</span>
                 <span class="node-actions">
                   <button v-if="connKind(c.name) === 'redis'" class="btn-icon" style="width: 20px; height: 20px" title="打开" @click.stop="store.openRedisKeyTab(c.name, db.name, o.name)">
                     <Icon name="key" :size="12" />
@@ -997,6 +1047,7 @@ function objIcon(o: ObjectInfo) {
                     <Icon name="column" :size="12" />
                   </button>
                 </span>
+                <span class="badge">{{ o.type }}</span>
               </div>
               <div v-if="!visibleObjs(c.name, db.name).length && !store.objectsLoading[store.cacheKey(c.name, db.name)]" class="faint" style="padding: 4px 8px; font-size: 11px">
                 {{ connKind(c.name) === "redis" ? "双击数据库打开键搜索" : "暂无匹配对象" }}
