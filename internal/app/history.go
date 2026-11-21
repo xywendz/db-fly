@@ -24,31 +24,29 @@ func (a *App) recordHistory(e config.QueryHistoryEntry) {
 	if len(e.Text) > maxHistoryText {
 		e.Text = e.Text[:maxHistoryText] + "…"
 	}
-	_ = a.mutateConfig(func(cfg *config.Config) error {
-		config.AppendHistory(cfg, e, maxHistoryEntries)
-		return nil
+	_ = a.mutateHistory(func(items []config.QueryHistoryEntry) ([]config.QueryHistoryEntry, error) {
+		return config.AppendHistoryEntries(items, e, maxHistoryEntries), nil
 	})
 }
 
 // ListHistory 返回最近的查询/导入记录（最新在前）。limit<=0 表示全部。
 func (a *App) ListHistory(limit int) ([]config.QueryHistoryEntry, error) {
-	cfg, err := a.loadConfig()
+	items, err := a.History.Load()
 	if err != nil {
 		return nil, err
 	}
-	if limit <= 0 || limit > len(cfg.QueryHistory) {
-		limit = len(cfg.QueryHistory)
+	if limit <= 0 || limit > len(items) {
+		limit = len(items)
 	}
 	out := make([]config.QueryHistoryEntry, limit)
-	copy(out, cfg.QueryHistory[:limit])
+	copy(out, items[:limit])
 	return out, nil
 }
 
 // ClearHistory 清空全部查询历史。
 func (a *App) ClearHistory() error {
-	return a.mutateConfig(func(cfg *config.Config) error {
-		cfg.QueryHistory = nil
-		return nil
+	return a.mutateHistory(func([]config.QueryHistoryEntry) ([]config.QueryHistoryEntry, error) {
+		return nil, nil
 	})
 }
 

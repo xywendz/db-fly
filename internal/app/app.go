@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -21,18 +22,20 @@ import (
 // App 聚合配置、凭证、审计与会话缓存，是所有用例的入口。
 type App struct {
 	Config  config.Store
+	History config.HistoryStore
 	Secrets credential.Store
 	Audit   audit.Logger
 	// Owner 标识该内核的归属用户（Web 多用户模式下由 auth.Manager 注入），
 	// 用于审计日志追溯到具体账号；本地/GUI 模式为空。
 	Owner string
 
-	mu       sync.Mutex
-	cfgMu    sync.Mutex
-	sessions map[string]domain.Session
+	mu        sync.Mutex
+	cfgMu     sync.Mutex
+	historyMu sync.Mutex
+	sessions  map[string]domain.Session
 }
 
-// mutateConfig 串行化「读取 → 修改 → 保存」，避免历史、收藏与连接管理互相覆盖。
+// mutateConfig 串行化「读取 → 修改 → 保存」，避免收藏与连接管理互相覆盖。
 func (a *App) mutateConfig(fn func(*config.Config) error) error {
 	a.cfgMu.Lock()
 	defer a.cfgMu.Unlock()
@@ -44,6 +47,21 @@ func (a *App) mutateConfig(fn func(*config.Config) error) error {
 		return err
 	}
 	return a.Config.Save(cfg)
+}
+
+// mutateHistory 串行化查询历史的读改写；它与配置存储使用独立文件和独立锁。
+func (a *App) mutateHistory(fn func([]config.QueryHistoryEntry) ([]config.QueryHistoryEntry, error)) error {
+	a.historyMu.Lock()
+	defer a.historyMu.Unlock()
+	items, err := a.History.Load()
+	if err != nil {
+		return err
+	}
+	items, err = fn(items)
+	if err != nil {
+		return err
+	}
+	return a.History.Save(items)
 }
 
 // ownerAudit 在记录审计日志时自动补上操作归属人（App.Owner），
@@ -62,16 +80,30 @@ func (o *ownerAudit) Log(e audit.Entry) {
 	o.inner.Log(e)
 }
 
-// New 创建业务内核。
-func New(cfg config.Store, secrets credential.Store, logs audit.Logger) *App {
+// New 创建业务内核。history 可选注入；未提供时按配置目录创建 history.json。
+func New(cfg config.Store, secrets credential.Store, logs audit.Logger, history ...config.HistoryStore) *App {
 	if logs == nil {
 		logs = audit.Nop{}
 	}
 	if secrets == nil {
 		secrets = nopSecrets{}
 	}
+	var historyStore config.HistoryStore
+	if len(history) > 0 && history[0] != nil {
+		historyStore = history[0]
+	} else {
+		dir := ""
+		if cfg != nil {
+			dir = filepath.Dir(cfg.Path())
+			if dir == "." {
+				dir = ""
+			}
+		}
+		historyStore = config.NewHistoryStore(dir)
+	}
 	a := &App{
 		Config:   cfg,
+		History:  historyStore,
 		Secrets:  secrets,
 		Audit:    logs,
 		sessions: make(map[string]domain.Session),

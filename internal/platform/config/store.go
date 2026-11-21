@@ -59,7 +59,8 @@ type Config struct {
 	Connections  []domain.ConnectionConfig `json:"connections"`
 	Preferences  Preferences               `json:"preferences"`
 	SavedQueries []SavedQuery              `json:"saved_queries,omitempty"`
-	QueryHistory []QueryHistoryEntry       `json:"query_history,omitempty"`
+	// QueryHistory 仅用于兼容旧版 config.json；新数据一律写入 history.json。
+	QueryHistory []QueryHistoryEntry `json:"query_history,omitempty"`
 }
 
 // Default 返回带默认偏好的空白配置。
@@ -79,6 +80,14 @@ func Default() *Config {
 type Store interface {
 	Load() (*Config, error)
 	Save(cfg *Config) error
+	Path() string
+}
+
+// HistoryStore 是查询历史的独立持久化端口。历史高频写入，单独存文件可避免
+// 每次查询都重写连接、收藏与偏好所在的 config.json。
+type HistoryStore interface {
+	Load() ([]QueryHistoryEntry, error)
+	Save(items []QueryHistoryEntry) error
 	Path() string
 }
 
@@ -127,7 +136,11 @@ func New(dir string) (*FileStore, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("创建配置目录失败: %w", err)
 	}
-	return &FileStore{path: filepath.Join(dir, "config.json")}, nil
+	s := &FileStore{path: filepath.Join(dir, "config.json")}
+	if err := s.migrateHistoryToFile(); err != nil {
+		return nil, fmt.Errorf("迁移查询历史失败: %w", err)
+	}
+	return s, nil
 }
 
 func (s *FileStore) Path() string { return s.path }
@@ -160,12 +173,111 @@ func (s *FileStore) Save(cfg *Config) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	b, err := json.MarshalIndent(cfg, "", "  ")
+	// 查询历史已拆到 history.json；即使调用方持有旧结构也不再写回 config.json。
+	clean := *cfg
+	clean.QueryHistory = nil
+	b, err := json.MarshalIndent(&clean, "", "  ")
 	if err != nil {
 		return err
 	}
 	b = append(b, '\n')
 	return os.WriteFile(s.path, b, 0o600)
+}
+
+func writeFileAtomic(path string, data []byte) error {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+// HistoryFileStore 用 history.json 独立持久化查询历史。
+// 高频历史写入不再触碰连接、收藏与偏好所在的 config.json。
+type HistoryFileStore struct {
+	path string
+	mu   sync.Mutex
+}
+
+// NewHistoryStore 创建查询历史存储；dir 为空时回退到默认数据目录。
+func NewHistoryStore(dir string) *HistoryFileStore {
+	if dir == "" {
+		if resolved, err := DefaultDir(); err == nil {
+			dir = resolved
+		} else {
+			dir = "."
+		}
+	}
+	return &HistoryFileStore{path: filepath.Join(dir, "history.json")}
+}
+
+func (s *HistoryFileStore) Path() string { return s.path }
+
+func (s *HistoryFileStore) Load() ([]QueryHistoryEntry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	b, err := os.ReadFile(s.path)
+	if errors.Is(err, os.ErrNotExist) {
+		return []QueryHistoryEntry{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("读取查询历史失败: %w", err)
+	}
+	var items []QueryHistoryEntry
+	if err := json.Unmarshal(b, &items); err != nil {
+		return nil, fmt.Errorf("查询历史格式错误 (%s): %w", s.path, err)
+	}
+	if items == nil {
+		items = []QueryHistoryEntry{}
+	}
+	return items, nil
+}
+
+func (s *HistoryFileStore) Save(items []QueryHistoryEntry) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if items == nil {
+		items = []QueryHistoryEntry{}
+	}
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
+		return fmt.Errorf("创建查询历史目录失败: %w", err)
+	}
+	b, err := json.MarshalIndent(items, "", "  ")
+	if err != nil {
+		return err
+	}
+	b = append(b, '\n')
+	return writeFileAtomic(s.path, b)
+}
+
+// migrateHistoryToFile 把旧版 config.json 中的 query_history 一次性迁到 history.json，
+// 并从 config.json 中清除该字段，避免后续配置保存再次带回历史数据。
+func (s *FileStore) migrateHistoryToFile() error {
+	cfg, err := s.Load()
+	if err != nil {
+		return err
+	}
+	if len(cfg.QueryHistory) == 0 {
+		return nil
+	}
+	history := NewHistoryStore(filepath.Dir(s.path))
+	existing, err := history.Load()
+	if err != nil {
+		return err
+	}
+	if len(existing) == 0 {
+		if err := history.Save(cfg.QueryHistory); err != nil {
+			return err
+		}
+	}
+	cfg.QueryHistory = nil
+	return s.Save(cfg)
 }
 
 // FindConnection 按名称或 ID 查找连接配置。
@@ -223,13 +335,20 @@ func RemoveSavedQuery(cfg *Config, nameOrID string) bool {
 	return false
 }
 
-// AppendHistory 把一条历史插到最前面，并按上限裁剪（最新在前）。
+// AppendHistory 兼容旧调用：把一条历史写入 Config 的迁移字段。
+// 新代码应使用 AppendHistoryEntries 直接操作独立历史列表。
 func AppendHistory(cfg *Config, e QueryHistoryEntry, limit int) {
+	cfg.QueryHistory = AppendHistoryEntries(cfg.QueryHistory, e, limit)
+}
+
+// AppendHistoryEntries 把一条历史插到最前面，并按上限裁剪（最新在前）。
+func AppendHistoryEntries(items []QueryHistoryEntry, e QueryHistoryEntry, limit int) []QueryHistoryEntry {
 	if limit <= 0 {
 		limit = 200
 	}
-	cfg.QueryHistory = append([]QueryHistoryEntry{e}, cfg.QueryHistory...)
-	if len(cfg.QueryHistory) > limit {
-		cfg.QueryHistory = cfg.QueryHistory[:limit]
+	out := append([]QueryHistoryEntry{e}, items...)
+	if len(out) > limit {
+		out = out[:limit]
 	}
+	return out
 }

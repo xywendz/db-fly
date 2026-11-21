@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -322,6 +323,16 @@ func TestHistoryFavoritesAndPreferences(t *testing.T) {
 	history, err := a.ListHistory(3)
 	if err != nil || len(history) != 3 || history[0].Text != "SELECT 4" {
 		t.Fatalf("历史顺序/上限错误: %+v / %v", history, err)
+	}
+	configBytes, err := os.ReadFile(a.Config.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(configBytes), "query_history") {
+		t.Fatal("查询历史不应写入 config.json")
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(a.Config.Path()), "history.json")); err != nil {
+		t.Fatalf("独立历史文件未创建: %v", err)
 	}
 	if err := a.ClearHistory(); err != nil {
 		t.Fatal(err)

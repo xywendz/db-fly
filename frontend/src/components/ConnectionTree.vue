@@ -886,7 +886,6 @@ function objIcon(o: ObjectInfo) {
           ></span>
           <Icon :name="kindIcon[c.kind] || 'database'" :size="14" />
           <span class="label" :title="c.name">{{ c.name }}</span>
-          <span class="badge" :class="kindBadge[c.kind]">{{ c.kind }}</span>
           <span class="node-actions">
             <button class="btn-icon" style="width: 20px; height: 20px"
               :title="connKind(c.name) === 'elasticsearch' ? '新建索引' : '新建数据库'"
@@ -900,6 +899,7 @@ function objIcon(o: ObjectInfo) {
               <Icon name="more" :size="13" />
             </button>
           </span>
+          <span class="badge" :class="kindBadge[c.kind]">{{ c.kind }}</span>
         </div>
 
         <div v-if="connOpen(c.name)" class="tree-children">
