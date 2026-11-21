@@ -559,7 +559,7 @@ function openData() {
 .page-body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; padding: 10px; background: var(--bg); }
 .page-body > .card, .subpane > .card { flex-shrink: 0; }
 .subpane { display: flex; flex-direction: column; gap: 10px; }
-.table-scroll { max-height: 320px; border: 1px solid var(--border); border-radius: var(--radius-sm); min-width: 0; }
+.table-scroll { border: 1px solid var(--border); border-radius: var(--radius-sm); min-width: 0; }
 .table-scroll input, .table-scroll select { padding: 3px 6px; font-size: 11px; }
 .row-dropped td { opacity: .5; text-decoration: line-through; }
 .index-list { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 6px; }

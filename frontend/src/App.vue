@@ -253,7 +253,7 @@ onUnmounted(() => {
         </div>
 
         <div class="content grow">
-          <KeepAlive :max="12">
+          <KeepAlive>
             <ESConsoleView v-if="activeTab && activeTab.type === 'query' && activeIsES" :key="activeTab.id" :tab="activeTab" />
             <QueryView v-else-if="activeTab && activeTab.type === 'query'" :key="activeTab.id" :tab="activeTab" />
             <TableDataView v-else-if="activeTab && activeTab.type === 'data'" :key="activeTab.id" :tab="activeTab" />

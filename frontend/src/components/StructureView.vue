@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onActivated, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useWorkspace, type Tab } from "@/stores/workspace";
 import * as api from "@/api/client";
 import type {
@@ -111,9 +111,6 @@ async function load(showCreate = false) {
   }
 }
 onMounted(() => load());
-// 每次被激活（从其它页签切回 / 重新打开）都重新读取结构，确保是全新状态，
-// 不会残留上一次未应用的结构修改。
-onActivated(() => load());
 
 // 任何结构改动都会使已生成的脚本失效，必须重新预览才能应用。
 watch([colRows, newColumns, indexRows, newIndexes], () => {
@@ -580,7 +577,7 @@ async function rename() {
 .meta-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; flex-shrink: 0; }
 .sv-body { flex: 1; min-height: 0; min-width: 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); overflow: auto; }
 .sv-tools { padding: 6px 8px; gap: 8px; flex-wrap: wrap; }
-.sv-table { max-height: 340px; border-top: 1px solid var(--border); min-width: 0; }
+.sv-table { border-top: 1px solid var(--border); min-width: 0; }
 .editable-cell { cursor: text; }
 .editable-cell:hover { background: var(--accent-soft); }
 .cell-input { width: 100%; min-width: 0; padding: 3px 6px; font-size: 11px; }
