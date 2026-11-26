@@ -267,6 +267,8 @@ export interface FilterCondition {
   operator: string;
   value?: string;
   join?: string;
+  /** 仅前端控制该条件是否参与查询，不传给后端 */
+  enabled?: boolean;
 }
 
 export interface SortTerm {

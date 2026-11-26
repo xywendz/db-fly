@@ -55,6 +55,9 @@ const activeKeys = computed(() => (schema.value?.columns ?? []).filter((c) => c.
 const effectiveKeys = computed(() => (keyCols.value.length ? keyCols.value : activeKeys.value));
 const loadedRows = computed(() => outcome.value?.pages?.[0]?.rows?.length ?? 0);
 const canNext = computed(() => loadedRows.value >= maxRows.value);
+const activeConditions = computed(() =>
+  conditions.value.filter((c) => c.enabled !== false && c.column && (c.value ?? "") !== ""),
+);
 
 // 文档型数据库（MongoDB / Elasticsearch）以文档为单位编辑：JSON 输入框新增、按 _id 删除。
 const isDocument = computed(() => ["mongodb", "elasticsearch"].includes(
@@ -108,7 +111,12 @@ async function refresh() {
         // 显式写 "sql" 会被各模块的执行入口拒绝（如 MongoDB 只接受 JSON 查询）。
         language: "",
         ref: refObj.value,
-        conditions: conditions.value.filter((c) => c.column && (c.value ?? "") !== ""),
+        conditions: activeConditions.value.map((c) => ({
+          column: c.column,
+          operator: c.operator,
+          value: c.value,
+          join: c.join,
+        })),
         order_terms: sorts.value.filter((s) => s.column),
         max_rows: maxRows.value,
         offset: (page.value - 1) * maxRows.value,
@@ -163,6 +171,7 @@ function addCond() {
     operator: "=",
     value: "",
     join: conditions.value.length ? "AND" : "",
+    enabled: true,
   });
 }
 function addSort() {
@@ -493,7 +502,7 @@ async function deleteDocByIndex(i: number) {
       </button>
       <button class="btn" :class="{ active: showFilters }" @click="showFilters = !showFilters">
         <Icon name="filter" :size="13" /> 过滤 / 排序
-        <span v-if="conditions.length + sorts.length" class="badge badge-accent">{{ conditions.length + sorts.length }}</span>
+        <span v-if="activeConditions.length + sorts.length" class="badge badge-accent">{{ activeConditions.length + sorts.length }}</span>
       </button>
       <span class="divider-v"></span>
       <button class="btn btn-icon" :disabled="page <= 1" title="上一页" @click="goPage(-1)">
@@ -522,7 +531,8 @@ async function deleteDocByIndex(i: number) {
       </div>
       <div class="card-body col" style="gap: 6px">
         <div v-if="!conditions.length" class="faint" style="font-size: 11px">无条件 · 返回全部数据（受每页行数限制）</div>
-        <div v-for="(c, i) in conditions" :key="'c' + i" class="row" style="gap: 6px">
+        <div v-else-if="!activeConditions.length" class="faint" style="font-size: 11px">条件均未启用或未填写完整 · 返回全部数据</div>
+        <div v-for="(c, i) in conditions" :key="'c' + i" class="row condition-row" :class="{ 'cond-off': c.enabled === false }" style="gap: 6px">
           <select v-if="i > 0" v-model="c.join" style="width: 78px">
             <option value="AND">AND</option><option value="OR">OR</option>
           </select>
@@ -532,7 +542,10 @@ async function deleteDocByIndex(i: number) {
             <option>=</option><option>!=</option><option>&gt;</option><option>&lt;</option>
             <option>&gt;=</option><option>&lt;=</option><option>LIKE</option><option>IN</option>
           </select>
-          <input v-model="c.value" class="grow" placeholder="值（留空忽略该条件）" />
+          <input v-model="c.value" class="grow" placeholder="值（留空或未启用时忽略）" />
+          <label class="check-line cond-toggle" title="勾选后应用该条件">
+            <input type="checkbox" v-model="c.enabled" />
+          </label>
           <button class="btn btn-icon" title="移除条件" @click="conditions.splice(i, 1)">
             <Icon name="close" :size="13" />
           </button>
@@ -660,6 +673,8 @@ async function deleteDocByIndex(i: number) {
 .tdv > .toolbar { border: 1px solid var(--border); border-radius: var(--radius); padding: 7px 9px; max-width: 100%; }
 .filter-card { flex-shrink: 0; }
 .filter-card .card-body { padding: 10px; }
+.filter-card .condition-row > :not(.cond-toggle) { transition: opacity .15s; }
+.filter-card .condition-row.cond-off > :not(.cond-toggle) { opacity: .45; }
 .edit-bar { padding: 6px 9px; }
 .preview-box { flex-shrink: 0; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 9px 11px; }
 .preview-box pre { max-height: 150px; overflow: auto; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 9px; font-size: 11px; line-height: 1.6; }
