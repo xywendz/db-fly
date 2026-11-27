@@ -10,16 +10,16 @@ import (
 func (b *Bridge) ExecuteQuery(req QueryRequest) (domain.QueryOutcome, error) {
 	b.emit("query:started", map[string]any{"conn": req.Conn})
 	sink := &app.CollectSink{}
-	_, err := b.app.Execute(b.ctx(), req.Conn, req.Query, sink)
+	out, err := b.app.Execute(b.ctx(), req.Conn, req.Query, sink)
 	b.emit("query:finished", map[string]any{"conn": req.Conn, "ok": err == nil})
-	return sink.Outcome, err
+	return out, err
 }
 
 // ExplainQuery 执行执行计划查询。
 func (b *Bridge) ExplainQuery(req QueryRequest) (domain.QueryOutcome, error) {
 	sink := &app.CollectSink{}
-	_, err := b.app.Explain(b.ctx(), req.Conn, req.Query, sink)
-	return sink.Outcome, err
+	out, err := b.app.Explain(b.ctx(), req.Conn, req.Query, sink)
+	return out, err
 }
 
 // ExecStatement 执行单条无结果集语句（DDL / DML），用于结果集编辑回写等。

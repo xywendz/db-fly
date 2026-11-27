@@ -99,8 +99,22 @@ func (a *App) prepareQuery(ctx context.Context, conn string, q domain.Query) (do
 	return sess, c, q, time.Duration(sec) * time.Second, nil
 }
 
-// Execute 执行一条查询并把结果流式推送给 sink。
+// Execute 执行查询并把结果流式推送给 sink。
+// SQL 文本含多条分号分隔的语句时，按顺序逐条执行并合并结果，避免驱动拒绝多语句。
 func (a *App) Execute(ctx context.Context, conn string, q domain.Query, sink ResultSink) (domain.QueryOutcome, error) {
+	if statements := multiSQLStatements(q); len(statements) > 0 {
+		outcomes, err := a.executeStatements(ctx, conn, statements, q, sink)
+		merged := mergeOutcomes(outcomes)
+		if sink != nil {
+			sink.OnFinish(merged)
+		}
+		return merged, err
+	}
+	return a.executeOne(ctx, conn, q, sink)
+}
+
+// executeOne 执行单条查询，是多语句批量执行的内部单元。
+func (a *App) executeOne(ctx context.Context, conn string, q domain.Query, sink ResultSink) (domain.QueryOutcome, error) {
 	sess, c, q, timeout, err := a.prepareQuery(ctx, conn, q)
 	if err != nil {
 		return domain.QueryOutcome{}, err
@@ -125,8 +139,21 @@ func (a *App) Execute(ctx context.Context, conn string, q domain.Query, sink Res
 	return outcome, err
 }
 
-// Explain 执行执行计划查询。
+// Explain 执行执行计划查询。多条 SQL 语句时逐条解释并合并结果。
 func (a *App) Explain(ctx context.Context, conn string, q domain.Query, sink ResultSink) (domain.QueryOutcome, error) {
+	if statements := multiSQLStatements(q); len(statements) > 0 {
+		outcomes, err := a.explainStatements(ctx, conn, statements, q, sink)
+		merged := mergeOutcomes(outcomes)
+		if sink != nil {
+			sink.OnFinish(merged)
+		}
+		return merged, err
+	}
+	return a.explainOne(ctx, conn, q, sink)
+}
+
+// explainOne 解释单条查询，是多语句批量解释的内部单元。
+func (a *App) explainOne(ctx context.Context, conn string, q domain.Query, sink ResultSink) (domain.QueryOutcome, error) {
 	sess, c, q, timeout, err := a.prepareQuery(ctx, conn, q)
 	if err != nil {
 		return domain.QueryOutcome{}, err
@@ -196,13 +223,60 @@ func maxInt(a, b int) int {
 	return b
 }
 
+// multiSQLStatements 仅在 SQL 语言且文本包含多条语句时返回拆分结果。
+// 非 SQL 输入（Mongo/Redis/ES）按分号拆分会破坏 JSON/DSL，因此不参与。
+func multiSQLStatements(q domain.Query) []string {
+	if q.Language != domain.LangSQL || strings.TrimSpace(q.Text) == "" {
+		return nil
+	}
+	statements := SplitStatements(q.Text)
+	if len(statements) <= 1 {
+		return nil
+	}
+	return statements
+}
+
+// mergeOutcomes 把多条语句的结果合并成一个面向表现层的查询结果。
+func mergeOutcomes(outcomes []domain.QueryOutcome) domain.QueryOutcome {
+	merged := domain.QueryOutcome{
+		Pages:   make([]domain.ResultPage, 0),
+		Summary: domain.QuerySummary{Messages: make([]domain.ServerMessage, 0)},
+	}
+	for _, out := range outcomes {
+		merged.Pages = append(merged.Pages, out.Pages...)
+		merged.Summary.Rows += out.Summary.Rows
+		merged.Summary.Affected += out.Summary.Affected
+		merged.Summary.DurationMs += out.Summary.DurationMs
+		merged.Summary.Truncated = merged.Summary.Truncated || out.Summary.Truncated
+		merged.Summary.Messages = append(merged.Summary.Messages, out.Summary.Messages...)
+	}
+	merged.Summary.Pages = len(merged.Pages)
+	return merged
+}
+
 // ExecuteStatements 按语句拆分顺序执行多条 SQL，任一失败即停止。
 func (a *App) ExecuteStatements(ctx context.Context, conn, text string, q domain.Query, sink ResultSink) ([]domain.QueryOutcome, error) {
-	statements := SplitStatements(text)
+	return a.executeStatements(ctx, conn, SplitStatements(text), q, sink)
+}
+
+func (a *App) executeStatements(ctx context.Context, conn string, statements []string, q domain.Query, sink ResultSink) ([]domain.QueryOutcome, error) {
 	outcomes := make([]domain.QueryOutcome, 0, len(statements))
 	for _, stmt := range statements {
 		q.Text = stmt
-		out, err := a.Execute(ctx, conn, q, sink)
+		out, err := a.executeOne(ctx, conn, q, sink)
+		if err != nil {
+			return outcomes, err
+		}
+		outcomes = append(outcomes, out)
+	}
+	return outcomes, nil
+}
+
+func (a *App) explainStatements(ctx context.Context, conn string, statements []string, q domain.Query, sink ResultSink) ([]domain.QueryOutcome, error) {
+	outcomes := make([]domain.QueryOutcome, 0, len(statements))
+	for _, stmt := range statements {
+		q.Text = stmt
+		out, err := a.explainOne(ctx, conn, q, sink)
 		if err != nil {
 			return outcomes, err
 		}
