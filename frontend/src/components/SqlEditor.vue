@@ -21,6 +21,8 @@ const store = useWorkspace();
 const ta = ref<HTMLTextAreaElement | null>(null);
 const layer = ref<HTMLPreElement | null>(null);
 const wrap = ref<HTMLDivElement | null>(null);
+const gutter = ref<HTMLDivElement | null>(null);
+const gutterRange = ref<{ start: number; end: number } | null>(null);
 
 type TokenClass = "tok-kw" | "tok-fn" | "tok-str" | "tok-num" | "tok-comment" | "tok-ident" | "tok-table" | "tok-col" | "";
 interface Token { text: string; cls: TokenClass; title?: string }
@@ -280,6 +282,9 @@ const columnPending = new Map<string, Promise<void>>();
 const composing = ref(false);
 const scrollTop = ref(0);
 const caret = ref({ left: 0, top: 0 });
+// textarea 会把 CRLF/CR 规范化为 LF，高亮层与行号也统一使用规范化后的文本，
+// 否则多行文本的行位置会与输入框不一致，导致鼠标选行错位。
+const text = computed(() => props.modelValue.replace(/\r\n?/g, "\n"));
 
 const tableSet = computed(() => new Set(meta.value.tables.map((t) => t.name.split(".").pop()!.toLowerCase())));
 const columnSet = computed(() => {
@@ -288,15 +293,15 @@ const columnSet = computed(() => {
   return set;
 });
 const tokens = computed<Token[]>(() => {
-  const text = props.modelValue;
-  if (!text) return [];
-  if (props.language === "sql") return tokenizeSQL(text, tableSet.value, columnSet.value);
-  if (props.language === "redis") return tokenizeRedis(text, REDIS_COMMAND_SET, REDIS_OPTION_SET, tableSet.value);
-  if (props.language === "es_dsl") return tokenizeJSON(text, ES_WORD_SET, tableSet.value, columnSet.value);
-  if (props.language.startsWith("mongo")) return tokenizeJSON(text, MONGO_WORD_SET, tableSet.value, columnSet.value);
-  return [{ text, cls: "" }];
+  const value = text.value;
+  if (!value) return [];
+  if (props.language === "sql") return tokenizeSQL(value, tableSet.value, columnSet.value);
+  if (props.language === "redis") return tokenizeRedis(value, REDIS_COMMAND_SET, REDIS_OPTION_SET, tableSet.value);
+  if (props.language === "es_dsl") return tokenizeJSON(value, ES_WORD_SET, tableSet.value, columnSet.value);
+  if (props.language.startsWith("mongo")) return tokenizeJSON(value, MONGO_WORD_SET, tableSet.value, columnSet.value);
+  return [{ text: value, cls: "" }];
 });
-const lineCount = computed(() => props.modelValue.split("\n").length);
+const lineCount = computed(() => text.value.split("\n").length);
 
 interface SuggestState {
   open: boolean;
@@ -349,6 +354,59 @@ function syncScroll() {
   hi.scrollTop = el.scrollTop;
   hi.scrollLeft = el.scrollLeft;
   updateCaret();
+}
+
+// 行号槽支持点击 / 拖拽选中整行，避免用鼠标选行时落到相邻行。
+function lineIndexFromY(clientY: number): number {
+  const el = gutter.value;
+  if (!el) return 0;
+  const cs = getComputedStyle(el);
+  const lh = parseFloat(cs.lineHeight) || 20;
+  const padTop = parseFloat(cs.paddingTop) || 0;
+  const rect = el.getBoundingClientRect();
+  const y = clientY - rect.top - padTop + (ta.value?.scrollTop ?? 0);
+  return Math.max(0, Math.min(lineCount.value - 1, Math.floor(y / lh)));
+}
+function selectGutterLines(from: number, to: number) {
+  const el = ta.value;
+  if (!el) return;
+  const lines = text.value.split("\n");
+  const a = Math.max(0, Math.min(from, to));
+  const b = Math.min(lines.length - 1, Math.max(from, to));
+  let start = 0;
+  for (let i = 0; i < a; i++) start += lines[i].length + 1;
+  let end = start;
+  for (let i = a; i <= b; i++) {
+    end += lines[i].length;
+    if (i < b) end += 1;
+  }
+  el.focus({ preventScroll: true });
+  el.setSelectionRange(start, end);
+  gutterRange.value = { start: a, end: b };
+  closeSuggest();
+  updateCaret();
+}
+let gutterAnchor: number | null = null;
+function onGutterMouseDown(e: MouseEvent) {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  const line = lineIndexFromY(e.clientY);
+  gutterAnchor = line;
+  selectGutterLines(line, line);
+  window.addEventListener("mousemove", onGutterMouseMove);
+  window.addEventListener("mouseup", onGutterMouseUp);
+}
+function onGutterMouseMove(e: MouseEvent) {
+  if (gutterAnchor === null) return;
+  selectGutterLines(gutterAnchor, lineIndexFromY(e.clientY));
+}
+function onGutterMouseUp() {
+  gutterAnchor = null;
+  window.removeEventListener("mousemove", onGutterMouseMove);
+  window.removeEventListener("mouseup", onGutterMouseUp);
+}
+function clearGutterRange() {
+  gutterRange.value = null;
 }
 
 function sameIdent(a: string | undefined, b: string | undefined) {
@@ -676,11 +734,11 @@ function acceptSuggestion(i: number) {
   if (!s || !el) return;
   const from = suggest.value.start;
   const to = Math.max(suggest.value.end, el.selectionStart);
-  const text = props.modelValue;
+  const value = text.value;
   const jsonLang = props.language === "es_dsl" || props.language.startsWith("mongo");
   // 在尚未闭合的 JSON 字符串中补全时自动补上收尾引号。
-  const insert = jsonLang && from > 0 && text[from - 1] === '"' && text[to] !== '"' ? `${s.insert}"` : s.insert;
-  emit("update:modelValue", text.slice(0, from) + insert + text.slice(to));
+  const insert = jsonLang && from > 0 && value[from - 1] === '"' && value[to] !== '"' ? `${s.insert}"` : s.insert;
+  emit("update:modelValue", value.slice(0, from) + insert + value.slice(to));
   closeSuggest();
   nextTick(() => {
     const caretPos = from + insert.length;
@@ -692,6 +750,7 @@ function acceptSuggestion(i: number) {
 
 function onInput(e: Event) {
   const el = e.target as HTMLTextAreaElement;
+  clearGutterRange();
   emit("update:modelValue", el.value);
   if (!composing.value) void detectSuggestions(false);
 }
@@ -736,11 +795,13 @@ function onKeydown(e: KeyboardEvent) {
     const el = e.target as HTMLTextAreaElement;
     const start = el.selectionStart;
     const end = el.selectionEnd;
-    emit("update:modelValue", props.modelValue.slice(0, start) + "  " + props.modelValue.slice(end));
+    const value = text.value;
+    emit("update:modelValue", value.slice(0, start) + "  " + value.slice(end));
     nextTick(() => { el.selectionStart = el.selectionEnd = start + 2; });
   }
 }
 function onCursor() {
+  clearGutterRange();
   updateCaret();
   if (suggest.value.open) void detectSuggestions(false);
 }
@@ -761,15 +822,22 @@ onMounted(() => {
   document.addEventListener("mousedown", onDocMouseDown);
   nextTick(syncScroll);
 });
-onBeforeUnmount(() => document.removeEventListener("mousedown", onDocMouseDown));
+onBeforeUnmount(() => {
+  document.removeEventListener("mousedown", onDocMouseDown);
+  onGutterMouseUp();
+});
 defineExpose({ focus: () => ta.value?.focus() });
 </script>
 
 <template>
   <div class="editor-pane" :style="{ height: props.height + 'px' }">
-    <div class="gutter code">
+    <div ref="gutter" class="gutter code" title="点击或拖换行号可选中整行" @mousedown.prevent="onGutterMouseDown">
       <div class="gutter-inner" :style="{ transform: `translateY(${-scrollTop}px)` }">
-        <div v-for="n in lineCount" :key="n">{{ n }}</div>
+        <div
+          v-for="n in lineCount"
+          :key="n"
+          :class="{ 'gutter-active': gutterRange && n - 1 >= gutterRange.start && n - 1 <= gutterRange.end }"
+        >{{ n }}</div>
       </div>
     </div>
     <div ref="wrap" class="editor-input">
@@ -777,7 +845,7 @@ defineExpose({ focus: () => ta.value?.focus() });
         v-for="(t, i) in tokens" :key="i" :class="t.cls" :title="t.title">{{ t.text }}</span></pre>
       <textarea
         ref="ta"
-        :value="props.modelValue"
+        :value="text"
         class="code sql-input"
         :class="{ composing }"
         wrap="off"
@@ -816,8 +884,9 @@ defineExpose({ focus: () => ta.value?.focus() });
 
 <style scoped>
 .editor-pane { display: flex; min-height: 90px; border: 1px solid var(--border); border-top: 0; background: var(--bg); flex-shrink: 0; overflow: hidden; }
-.gutter { width: 46px; flex-shrink: 0; overflow: hidden; padding: 10px 8px 10px 0; text-align: right; font-size: var(--fs-code); line-height: 20px; color: var(--text-faint); background: var(--surface); border-right: 1px solid var(--border); user-select: none; }
+.gutter { width: 46px; flex-shrink: 0; overflow: hidden; padding: 10px 8px 10px 0; text-align: right; font-size: var(--fs-code); line-height: 20px; color: var(--text-faint); background: var(--surface); border-right: 1px solid var(--border); user-select: none; cursor: pointer; }
 .gutter-inner > div { height: 20px; }
+.gutter-inner > div.gutter-active { color: var(--accent-hover); background: var(--accent-soft); }
 .editor-input { position: relative; flex: 1; min-width: 0; overflow: hidden; }
 .highlight, .sql-input {
   position: absolute; inset: 0; width: 100%; height: 100%; margin: 0;
@@ -828,6 +897,7 @@ defineExpose({ focus: () => ta.value?.focus() });
 .highlight { z-index: 1; overflow: hidden; pointer-events: none; color: var(--text); background: transparent; }
 .sql-input { z-index: 2; resize: none; overflow: auto; background: transparent; color: transparent; -webkit-text-fill-color: transparent; caret-color: var(--text); outline: none; }
 .sql-input:focus { border: 0; box-shadow: none; outline: none; }
+.sql-input::selection { background: rgba(77, 208, 225, .35); }
 :root[data-density="compact"] .sql-input { padding: 10px 12px; }
 .sql-input::placeholder { color: var(--text-faint); -webkit-text-fill-color: var(--text-faint); }
 .sql-input.composing { color: var(--text); -webkit-text-fill-color: var(--text); }

@@ -153,14 +153,19 @@ function selectCell(ri: number, ci: number, cell: Cell, column: string) {
   selectedCell.value = { text: effectiveDisplay(ri, ci, cell), column, ri };
 }
 
+function isCellEditing(ri: number, ci: number) {
+  const e = editing.value;
+  return !!e && e.pi === activePage.value && e.ri === ri && e.ci === ci;
+}
+
 async function startEdit(pi: number, ri: number, ci: number, column: string, cell: Cell) {
   if (!props.editable || isDeleted(ri)) return;
   editing.value = { pi, ri, ci, column };
   const initial = effectiveDisplay(ri, ci, cell);
   draft.value = initial === "NULL" ? "" : initial;
   await nextTick();
-  // v-for 中的模板 ref 会是数组，直接取当前唯一的编辑框更可靠。
-  const el = document.querySelector<HTMLInputElement>(".cell-input");
+  // 草稿行也有同类输入框，用标记精确定位当前编辑框。
+  const el = document.querySelector<HTMLInputElement>(".cell-input[data-edit='true']");
   el?.focus();
   el?.select();
 }
@@ -339,16 +344,17 @@ defineExpose({ copyText, asText });
                 @click="selectCell(item.ri, ci, cell, pageColumns[ci]?.name ?? '')"
                 @dblclick="startEdit(activePage, item.ri, ci, pageColumns[ci]?.name ?? '', cell)"
               >
+                <span class="cell-text" :class="{ 'cell-sizer': isCellEditing(item.ri, ci) }">{{ effectiveDisplay(item.ri, ci, cell) }}</span>
                 <input
-                  v-if="editing && editing.ri === item.ri && editing.ci === ci"
+                  v-if="isCellEditing(item.ri, ci)"
                   v-model="draft"
                   class="cell-input"
+                  data-edit="true"
                   @keydown.enter.prevent="commitEdit"
                   @keydown.esc.prevent="cancelEdit"
                   @blur="commitEdit"
                   @click.stop
                 />
-                <span v-else class="cell-text">{{ effectiveDisplay(item.ri, ci, cell) }}</span>
               </td>
             </tr>
             <tr v-for="(d, di) in (draftRows ?? [])" :key="'draft' + di" class="row-draft">
@@ -359,6 +365,7 @@ defineExpose({ copyText, asText });
               </td>
               <td class="rownum" style="color: var(--accent)">+</td>
               <td v-for="(col, ci) in pageColumns" :key="ci" class="cell" :style="colStyle(col.name)">
+                <span class="cell-text cell-sizer">{{ d[col.name] ?? '' }}</span>
                 <input
                   class="cell-input draft-input"
                   :value="d[col.name] ?? ''"
@@ -419,11 +426,13 @@ defineExpose({ copyText, asText });
 .data-table thead th.rownum { left: 0; z-index: 3; }
 .col-resizer { position: absolute; top: 0; right: 0; width: 7px; height: 100%; cursor: col-resize; user-select: none; z-index: 1; }
 .col-resizer:hover { background: var(--accent); }
-.cell { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: default; }
+.cell { position: relative; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: default; }
 .cell-text { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 编辑时保留文本占位，输入框浮在单元格上，避免输入框参与表格列宽计算。 */
+.cell-sizer { visibility: hidden; }
 .cell.edited { background: var(--warn-soft) !important; box-shadow: inset 2px 0 0 var(--warn); }
 .cell.cell-active { outline: 1px solid var(--accent); outline-offset: -1px; }
-.cell-input { width: 100%; min-width: 0; padding: 2px 4px; background: var(--bg); border-color: var(--accent); font-family: var(--mono); }
+.cell-input { position: absolute; inset: 0; width: 100%; height: 100%; min-width: 0; padding: inherit !important; background: var(--bg); border-color: var(--accent); font-family: var(--mono); }
 .row-deleted td { opacity: .45; text-decoration: line-through; background: var(--danger-soft) !important; }
 .row-selected td { background: var(--accent-soft) !important; }
 .row-draft td { background: var(--accent-soft) !important; }
